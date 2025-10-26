@@ -4,14 +4,25 @@ import threading
 from scapy.layers.inet import IP, TCP, UDP
 from scapy.all import sniff
 
-sniffing = False #הגדרה ראשונית לשלילה  כי אנחנו לא מתחילים לסרוק את הפקטות 
+sniffing = False  # initial state: not sniffing
 
 def app_menu():
     root = tkinter.Tk()
+    # Set the window size
+    window_width = 800
+    window_height = 500
+
+    # Center the window
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    center_x = int(screen_width / 2 - window_width / 2)
+    center_y = int(screen_height / 2 - window_height / 2)
+    root.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
+
     root.title("Roni's Sniffer")
-    root.geometry("800x500")
     root.configure(bg="#1e1e1e")
 
+    # --- Title ---
     title_label = tkinter.Label(
         root,
         text="The ultimate Sniffer",
@@ -21,6 +32,7 @@ def app_menu():
     )
     title_label.pack(pady=40)
 
+    # --- Buttons ---
     start_button = tkinter.Button(
         root,
         text="Regular Sniffer",
@@ -31,8 +43,21 @@ def app_menu():
         height=2,
         command=lambda: start_sniffer(root)
     )
-    start_button.pack(pady=50)
+    start_button.pack(pady=10)
 
+    anylaze_button = tkinter.Button(
+        root,
+        text="Analyze Malware",
+        font=("Arial", 14),
+        bg="red",
+        fg="white",
+        width=15,
+        height=2,
+        command=lambda: anylaze_problems(root)
+    )
+    anylaze_button.pack(pady=15)
+
+    # --- Footer ---
     honor_label = tkinter.Label(
         root,
         text="Roni Zusev",
@@ -44,18 +69,17 @@ def app_menu():
 
     root.mainloop()
 
-def start_sniffer(parent):
 
-    #the way this works is by global var - sniffing
+def start_sniffer(parent):
     global sniffing
-    #this var decides if the app continue to search for packets or not and display them.
-    parent.destroy()
+    parent.destroy()  # close main menu
 
     sniffer_window = tkinter.Tk()
     sniffer_window.title("Sniffer Active")
     sniffer_window.geometry("900x600")
     sniffer_window.configure(bg="#1e1e1e")
 
+    # --- Top Label ---
     label = tkinter.Label(
         sniffer_window,
         text="Sniffer Ready!",
@@ -65,7 +89,7 @@ def start_sniffer(parent):
     )
     label.pack(pady=10)
 
-    # --- FILTER FIELDS ---
+    # --- Filters ---
     filter_frame = tkinter.Frame(sniffer_window, bg="#1e1e1e")
     filter_frame.pack(pady=10)
 
@@ -77,7 +101,7 @@ def start_sniffer(parent):
     port_filter_entry = tkinter.Entry(filter_frame)
     port_filter_entry.grid(row=0, column=3, padx=10)
 
-    # --- TABLE ---
+    # --- Table ---
     columns = ("src_ip", "dst_ip", "port", "protocol")
     tree = ttk.Treeview(sniffer_window, columns=columns, show="headings")
     tree.heading("src_ip", text="Source IP")
@@ -86,7 +110,7 @@ def start_sniffer(parent):
     tree.heading("protocol", text="Protocol")
     tree.pack(expand=True, fill="both", padx=10, pady=10)
 
-    # --- FUNCTIONS ---
+    # --- Packet Processing ---
     def process_packet(packet):
         if IP in packet:
             src = packet[IP].src
@@ -94,15 +118,14 @@ def start_sniffer(parent):
             proto = "TCP" if TCP in packet else "UDP" if UDP in packet else "Other"
             port = "-"
             if TCP in packet:
-                port = f"{packet[TCP].sport}->{packet[TCP].dport}" #display the port from source to arrival
+                port = f"{packet[TCP].sport}->{packet[TCP].dport}"
             elif UDP in packet:
-                port = f"{packet[UDP].sport}->{packet[UDP].dport}"#display the port from source to arrival
+                port = f"{packet[UDP].sport}->{packet[UDP].dport}"
 
-            # Get filter values
             ip_filter = ip_filter_entry.get().strip()
             port_filter = port_filter_entry.get().strip()
 
-            # --- Apply filters ---
+            # Apply filters
             if ip_filter and ip_filter not in (src, dst):
                 return
             if port_filter and port_filter not in port:
@@ -111,6 +134,7 @@ def start_sniffer(parent):
             tree.insert("", "end", values=(src, dst, port, proto))
             tree.yview_moveto(1)
 
+    # --- Sniff Thread ---
     def sniff_thread():
         global sniffing
         sniffing = True
@@ -124,7 +148,13 @@ def start_sniffer(parent):
         global sniffing
         sniffing = False
 
-    # --- BUTTONS ---
+    def return_to_menu():
+        global sniffing
+        sniffing = False
+        sniffer_window.destroy()
+        app_menu()
+
+    # --- Buttons ---
     button_frame = tkinter.Frame(sniffer_window, bg="#1e1e1e")
     button_frame.pack(pady=15)
 
@@ -152,9 +182,53 @@ def start_sniffer(parent):
     )
     stop_btn.grid(row=0, column=1, padx=10)
 
+    # --- Return Button at top-left ---
+    return_btn = tkinter.Button(
+        sniffer_window,
+        text="Return to Menu",
+        font=("Arial", 10),
+        bg="#c00000",
+        fg="white",
+        width=15,
+        height=2,
+        command=return_to_menu
+    )
+    return_btn.place(x=10, y=10)
+
     sniffer_window.mainloop()
+
+
+def anylaze_problems(parent):
+    parent.destroy()
+    analyze_window = tkinter.Tk()
+    analyze_window.title("Analyze Malware")
+    analyze_window.geometry("900x600")
+    analyze_window.configure(bg="#1e1e1e")
+
+    label = tkinter.Label(
+        analyze_window,
+        text="Analyze Cyber Attacks",
+        font=("Arial", 20, "bold"),
+        fg="white",
+        bg="#1e1e1e"
+    )
+    label.pack(pady=10)
+
+    # Return button for analyze window
+    return_btn = tkinter.Button(
+        analyze_window,
+        text="Return to Menu",
+        font=("Arial", 10),
+        bg="#c00000",
+        fg="white",
+        width=15,
+        height=2,
+        command=lambda: [analyze_window.destroy(), app_menu()]
+    )
+    return_btn.place(x=10, y=10)
+
+    analyze_window.mainloop()
 
 
 if __name__ == "__main__":
     app_menu()
-
