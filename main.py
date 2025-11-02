@@ -1,80 +1,108 @@
 import tkinter
 from tkinter import ttk
 import threading
-from scapy.layers.inet import IP, TCP, UDP
+from scapy.layers.inet import IP, TCP, UDP, ICMP
+from scapy.layers.l2 import ARP, Ether
 from scapy.all import sniff
 
 sniffing = False  # initial state: not sniffing
 
-def app_menu():
-    root = tkinter.Tk()
-    # Set the window size
-    window_width = 800
-    window_height = 500
+import tkinter as tk
+from tkinter import ttk, messagebox
 
-    # Center the window
-    screen_width = root.winfo_screenwidth()
-    screen_height = root.winfo_screenheight()
-    center_x = int(screen_width / 2 - window_width / 2)
-    center_y = int(screen_height / 2 - window_height / 2)
-    root.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
-
+def create_main_window():
+    root = tk.Tk()
     root.title("Roni's Sniffer")
     root.configure(bg="#1e1e1e")
 
-    # --- Title ---
-    title_label = tkinter.Label(
-        root,
-        text="The ultimate Sniffer",
-        font=("Arial", 50, "bold"),
-        fg="white",
-        bg="#202020"
-    )
-    title_label.pack(pady=40)
+    # Window size & center
+    window_width, window_height = 900, 540
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
+    x = (screen_w - window_width) // 2
+    y = (screen_h - window_height) // 2
+    root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+    root.minsize(700, 420)
 
-    # --- Buttons ---
-    start_button = tkinter.Button(
-        root,
-        text="Regular Sniffer",
-        font=("Arial", 14),
-        bg="#00b050",
-        fg="white",
-        width=15,
-        height=2,
-        command=lambda: start_sniffer(root)
-    )
-    start_button.pack(pady=10)
+    # Fonts
+    header_font = ("Segoe UI", 36, "bold")
+    sub_font = ("Segoe UI", 12)
+    btn_font = ("Segoe UI", 14, "bold")
+    footer_font = ("Segoe UI", 11)
 
-    anylaze_button = tkinter.Button(
-        root,
-        text="Analyze Malware",
-        font=("Arial", 14),
-        bg="red",
-        fg="white",
-        width=15,
-        height=2,
-        command=lambda: anylaze_problems(root)
-    )
-    anylaze_button.pack(pady=15)
+    # ttk style
+    style = ttk.Style(root)
+    style.theme_use('clam')
+    style.configure("TLabel", background="#1e1e1e", foreground="white")
+    style.configure("Big.TButton",
+                    font=btn_font,
+                    padding=(18, 10),
+                    relief="flat")
+    style.map("Big.TButton",
+              foreground=[('active', 'white')],
+              background=[('active', '#00a046')])
 
-    # --- Footer ---
-    honor_label = tkinter.Label(
-        root,
-        text="Roni Zusev",
-        font=("Arial", 18),
-        fg="white",
-        bg="#202020"
-    )
-    honor_label.pack(side="left", anchor="s", padx=20, pady=30)
+    # Grid layout
+    root.grid_rowconfigure(1, weight=1)
+    root.grid_columnconfigure(0, weight=1)
 
-    root.mainloop()
+    # Header
+    header = tk.Frame(root, bg="#1e1e1e")
+    header.grid(row=0, column=0, sticky="nsew", padx=24, pady=(18,6))
+    title = tk.Label(header, text="The Ultimate Sniffer", font=header_font, fg="white", bg="#1e1e1e")
+    title.pack(anchor="center")
+    subtitle = tk.Label(header, text="Inspect, analyze and debug network traffic", font=sub_font, fg="#bdbdbd", bg="#1e1e1e")
+    subtitle.pack(anchor="center", pady=(6,0))
 
+    # Main frame (center)
+    main = tk.Frame(root, bg="#151515")
+    main.grid(row=1, column=0, sticky="nsew", padx=20, pady=18)
+    main.grid_rowconfigure(0, weight=1)
+    main.grid_columnconfigure((0,1), weight=1, uniform="col")
+
+    # Left card - Regular Sniffer
+    left_card = tk.Frame(main, bg="#1c1c1c", padx=18, pady=18)
+    left_card.grid(row=0, column=0, sticky="nsew", padx=(0,10), pady=10)
+    lbl1 = tk.Label(left_card, text="Regular Sniffer", font=("Segoe UI", 18, "bold"), fg="white", bg="#1c1c1c")
+    lbl1.grid(row=0, column=0, sticky="w")
+    desc1 = tk.Label(left_card, text="Capture live traffic from an interface and view packet summaries in realtime.", font=sub_font, fg="#cfcfcf", bg="#1c1c1c", wraplength=380, justify="left")
+    desc1.grid(row=1, column=0, sticky="w", pady=(8,18))
+    start_btn = ttk.Button(left_card, text="▶ Start Sniffer (Ctrl+S)", style="Big.TButton",
+                           command=lambda: start_sniffer(root))
+    start_btn.grid(row=2, column=0, sticky="w")
+
+    # Right card - Analyze Malware
+    right_card = tk.Frame(main, bg="#1c1c1c", padx=18, pady=18)
+    right_card.grid(row=0, column=1, sticky="nsew", padx=(10,0), pady=10)
+    lbl2 = tk.Label(right_card, text="Analyze Malware", font=("Segoe UI", 18, "bold"), fg="white", bg="#1c1c1c")
+    lbl2.grid(row=0, column=0, sticky="w")
+    desc2 = tk.Label(right_card, text="Run deeper analysis on suspicious packets or payloads to detect anomalies.", font=sub_font, fg="#cfcfcf", bg="#1c1c1c", wraplength=380, justify="left")
+    desc2.grid(row=1, column=0, sticky="w", pady=(8,18))
+    analyze_btn = ttk.Button(right_card, text="⚠ Analyze Malware (Ctrl+A)", style="Big.TButton",
+                             command=lambda: anylaze_problems(root))
+    analyze_btn.grid(row=2, column=0, sticky="w")
+
+    # Keyboard shortcuts
+    root.bind_all("<Control-s>", lambda _e: start_sniffer(root))
+    root.bind_all("<Control-S>", lambda _e: start_sniffer(root))
+    root.bind_all("<Control-a>", lambda _e: anylaze_problems(root))
+    root.bind_all("<Control-A>", lambda _e: anylaze_problems(root))
+
+    # Footer
+    footer = tk.Frame(root, bg="#202020")
+    footer.grid(row=2, column=0, sticky="ew")
+    footer.grid_columnconfigure(0, weight=1)
+    author = tk.Label(footer, text="© Roni Zusev", font=footer_font, fg="#bdbdbd", bg="#202020")
+    author.grid(row=0, column=0, columnspan=2, sticky="n", pady=8)
+
+    return root
 
 def start_sniffer(parent):
     global sniffing
     parent.destroy()  # close main menu
 
     sniffer_window = tkinter.Tk()
+    sniffer_window.state('zoomed')
     sniffer_window.title("Sniffer Active")
     sniffer_window.geometry("900x600")
     sniffer_window.configure(bg="#1e1e1e")
@@ -113,9 +141,19 @@ def start_sniffer(parent):
     # --- Packet Processing ---
     def process_packet(packet):
         if IP in packet:
+            if UDP in packet and (packet[UDP].sport == 5353 or packet[UDP].dport == 5353):
+                return  # skip mDNS packets
             src = packet[IP].src
             dst = packet[IP].dst
-            proto = "TCP" if TCP in packet else "UDP" if UDP in packet else "Other"
+            proto = (
+                "TCP" if TCP in packet
+                else "UDP" if UDP in packet
+                else "ICMP" if ICMP in packet
+                else "ARP" if ARP in packet
+                else "IPv6" if packet.haslayer("IPv6")
+                else "Ethernet" if Ether in packet
+                else "Other"
+            )
             port = "-"
             if TCP in packet:
                 port = f"{packet[TCP].sport}->{packet[TCP].dport}"
@@ -152,7 +190,7 @@ def start_sniffer(parent):
         global sniffing
         sniffing = False
         sniffer_window.destroy()
-        app_menu()
+        create_main_window()
 
     # --- Buttons ---
     button_frame = tkinter.Frame(sniffer_window, bg="#1e1e1e")
@@ -197,7 +235,6 @@ def start_sniffer(parent):
 
     sniffer_window.mainloop()
 
-
 def anylaze_problems(parent):
     parent.destroy()
     analyze_window = tkinter.Tk()
@@ -223,7 +260,7 @@ def anylaze_problems(parent):
         fg="white",
         width=15,
         height=2,
-        command=lambda: [analyze_window.destroy(), app_menu()]
+        command=lambda: [analyze_window.destroy(), create_main_window()]
     )
     return_btn.place(x=10, y=10)
 
@@ -231,4 +268,5 @@ def anylaze_problems(parent):
 
 
 if __name__ == "__main__":
-    app_menu()
+    app = create_main_window()
+    app.mainloop()
