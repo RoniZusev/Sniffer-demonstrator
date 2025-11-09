@@ -1,3 +1,4 @@
+
 import tkinter
 from tkinter import ttk
 import threading
@@ -138,8 +139,19 @@ def start_sniffer(parent):
     tree.heading("protocol", text="Protocol")
     tree.pack(expand=True, fill="both", padx=10, pady=10)
 
+    tree.tag_configure("TCP", foreground="orange")
+    tree.tag_configure("UDP", foreground="darkblue")
+    tree.tag_configure("ICMP", foreground="yellow")
+    tree.tag_configure("ARP", foreground="lightgreen")
+    tree.tag_configure("Other", foreground="black")
+
     # --- Packet Processing ---
     def process_packet(packet):
+        if ARP in packet and packet[ARP].op == 1 and packet[Ether].dst == "ff:ff:ff:ff:ff:ff":
+            src = packet[ARP].psrc
+            dst = packet[ARP].pdst
+            proto = "ARP"
+            port = "-"
         if IP in packet:
             if UDP in packet and (packet[UDP].sport == 5353 or packet[UDP].dport == 5353):
                 return  # skip mDNS packets
@@ -149,7 +161,6 @@ def start_sniffer(parent):
                 "TCP" if TCP in packet
                 else "UDP" if UDP in packet
                 else "ICMP" if ICMP in packet
-                else "ARP" if ARP in packet
                 else "IPv6" if packet.haslayer("IPv6")
                 else "Ethernet" if Ether in packet
                 else "Other"
@@ -169,8 +180,10 @@ def start_sniffer(parent):
             if port_filter and port_filter not in port:
                 return
 
-            tree.insert("", "end", values=(src, dst, port, proto))
+            tree.insert("", "end", values=(src, dst, port, proto) , tags = (proto,))
             tree.yview_moveto(1)
+
+        tree.insert("", "end", values=(src, dst, port, proto), tags=(proto,))
 
     # --- Sniff Thread ---
     def sniff_thread():
