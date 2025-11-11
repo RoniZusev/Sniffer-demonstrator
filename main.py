@@ -1,4 +1,3 @@
-
 import tkinter
 from tkinter import ttk
 import threading
@@ -6,10 +5,27 @@ from scapy.layers.inet import IP, TCP, UDP, ICMP
 from scapy.layers.l2 import ARP, Ether
 from scapy.all import sniff
 
-sniffing = False  # initial state: not sniffing
+sniffing = False
 
 import tkinter as tk
 from tkinter import ttk, messagebox
+
+import matplotlib
+matplotlib.use("Agg")  # avoid GUI backend conflicts; FigureCanvasTkAgg will handle rendering
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import time
+import collections
+import threading
+import datetime
+
+# Shared storage for captured packet summaries (used by Analyze window)
+captured_packets = []
+captured_lock = threading.Lock()
+
+arp_table = {}   # {ip: mac}
+arp_alerts = []
+arp_lock = threading.Lock()
 
 def create_main_window():
     root = tk.Tk()
@@ -100,9 +116,7 @@ def create_main_window():
 
 def start_sniffer(parent):
     global sniffing
-    parent.destroy()  # close main menu
-
-    sniffer_window = tkinter.Tk()
+    sniffer_window = tk.Toplevel(parent)
     sniffer_window.state('zoomed')
     sniffer_window.title("Sniffer Active")
     sniffer_window.geometry("900x600")
@@ -143,49 +157,111 @@ def start_sniffer(parent):
     tree.tag_configure("UDP", foreground="darkblue")
     tree.tag_configure("ICMP", foreground="yellow")
     tree.tag_configure("ARP", foreground="lightgreen")
+    tree.tag_configure("ALERT", foreground="red")
     tree.tag_configure("Other", foreground="black")
 
     # --- Packet Processing ---
     def process_packet(packet):
-        if ARP in packet and packet[ARP].op == 1 and packet[Ether].dst == "ff:ff:ff:ff:ff:ff":
-            src = packet[ARP].psrc
-            dst = packet[ARP].pdst
-            proto = "ARP"
+        try:
+            # decide what kind of packet this is and extract common fields
+            proto = "Other"
+            src = "-"
+            dst = "-"
             port = "-"
-        if IP in packet:
-            if UDP in packet and (packet[UDP].sport == 5353 or packet[UDP].dport == 5353):
-                return  # skip mDNS packets
-            src = packet[IP].src
-            dst = packet[IP].dst
-            proto = (
-                "TCP" if TCP in packet
-                else "UDP" if UDP in packet
-                else "ICMP" if ICMP in packet
-                else "IPv6" if packet.haslayer("IPv6")
-                else "Ethernet" if Ether in packet
-                else "Other"
-            )
-            port = "-"
-            if TCP in packet:
-                port = f"{packet[TCP].sport}->{packet[TCP].dport}"
-            elif UDP in packet:
-                port = f"{packet[UDP].sport}->{packet[UDP].dport}"
 
+            if ARP in packet:
+                src = packet[ARP].psrc
+                dst = packet[ARP].pdst
+                proto = "ARP"
+                port = "-"
+
+                src_mac = packet[ARP].hwsrc
+                arp_op = int(packet[ARP].op)  # request=1, reply=2
+
+                # update global arp table and detect anomalies
+                with arp_lock:
+                    prev_mac = arp_table.get(src)
+                    if prev_mac is None:
+                        arp_table[src] = src_mac
+                    else:
+                        if prev_mac != src_mac:
+                            # record an alert (don't block the GUI)
+                            alert = {
+                                "ts": time.time(),
+                                "ip": src,
+                                "old_mac": prev_mac,
+                                "new_mac": src_mac
+                            }
+                            arp_alerts.append(alert)
+                            # update mapping to the new observed MAC
+                            arp_table[src] = src_mac
+
+                # fall through to add to captured_packets and Treeview (with ARP tag)
+            elif IP in packet:
+                # skip mDNS
+                if UDP in packet and (packet[UDP].sport == 5353 or packet[UDP].dport == 5353):
+                    return
+
+                src = packet[IP].src
+                dst = packet[IP].dst
+                proto = (
+                    "TCP" if TCP in packet
+                    else "UDP" if UDP in packet
+                    else "ICMP" if ICMP in packet
+                    else "IPv6" if packet.haslayer("IPv6")
+                    else "Ethernet" if Ether in packet
+                    else "Other"
+                )
+
+                # build port string for TCP/UDP, keep '-' otherwise
+                port = "-"
+                if TCP in packet:
+                    port = f"{packet[TCP].sport}->{packet[TCP].dport}"
+                elif UDP in packet:
+                    port = f"{packet[UDP].sport}->{packet[UDP].dport}"
+            else:
+                # we don't handle other types here
+                return
+
+            # apply UI filters (if any)
             ip_filter = ip_filter_entry.get().strip()
             port_filter = port_filter_entry.get().strip()
-
-            # Apply filters
             if ip_filter and ip_filter not in (src, dst):
                 return
             if port_filter and port_filter not in port:
                 return
 
-            tree.insert("", "end", values=(src, dst, port, proto) , tags = (proto,))
+            # Thread-safe append to the shared captured_packets list
+            with captured_lock:
+                # store mac only for ARP to help analysis later
+                entry = {
+                    "ts": time.time(),
+                    "src": src,
+                    "dst": dst,
+                    "port": port,
+                    "proto": proto
+                }
+                if proto == "ARP":
+                    entry["mac"] = packet[ARP].hwsrc
+                captured_packets.append(entry)
+
+            # Insert into Treeview
+            # If this ARP packet caused a recent alert, tag as ALERT
+            tag = proto
+            # quick check: tag alert if newest arp_alerts refers to this ip and is recent
+            if proto == "ARP":
+                with arp_lock:
+                    if arp_alerts and arp_alerts[-1]["ip"] == src and (time.time() - arp_alerts[-1]["ts"]) < 2.0:
+                        tag = "ALERT"
+
+            tree.insert("", "end", values=(src, dst, port, proto), tags=(tag,))
             tree.yview_moveto(1)
 
-        tree.insert("", "end", values=(src, dst, port, proto), tags=(proto,))
+        except Exception as e:
+            # keep sniffing alive; optionally log errors for debug
+            print("process_packet error:", e)
+            return
 
-    # --- Sniff Thread ---
     def sniff_thread():
         global sniffing
         sniffing = True
@@ -233,7 +309,7 @@ def start_sniffer(parent):
     )
     stop_btn.grid(row=0, column=1, padx=10)
 
-    # --- Return Button at top-left ---
+    # Return button
     return_btn = tkinter.Button(
         sniffer_window,
         text="Return to Menu",
@@ -249,23 +325,17 @@ def start_sniffer(parent):
     sniffer_window.mainloop()
 
 def anylaze_problems(parent):
-    parent.destroy()
-    analyze_window = tkinter.Tk()
-    analyze_window.title("Analyze Malware")
-    analyze_window.geometry("900x600")
+    # It doesn't destroy menu, open analysis as Toplevel so user can return easily
+    analyze_window = tk.Toplevel(parent)
+    analyze_window.title("Analyze Malware — Findings")
+    analyze_window.geometry("1000x800")
     analyze_window.configure(bg="#1e1e1e")
 
-    label = tkinter.Label(
-        analyze_window,
-        text="Analyze Cyber Attacks",
-        font=("Arial", 20, "bold"),
-        fg="white",
-        bg="#1e1e1e"
-    )
-    label.pack(pady=10)
+    header = tk.Label(analyze_window, text="Analyze Cyber Attacks — Summary", font=("Arial", 18, "bold"), fg="white", bg="#1e1e1e")
+    header.pack(pady=10)
 
-    # Return button for analyze window
-    return_btn = tkinter.Button(
+    # Return button
+    return_btn = tk.Button(
         analyze_window,
         text="Return to Menu",
         font=("Arial", 10),
@@ -273,12 +343,115 @@ def anylaze_problems(parent):
         fg="white",
         width=15,
         height=2,
-        command=lambda: [analyze_window.destroy(), create_main_window()]
+        command=analyze_window.destroy
     )
     return_btn.place(x=10, y=10)
 
-    analyze_window.mainloop()
+    # Build aggregated stats from captured_packets (thread-safe snapshot)
+    with captured_lock:
+        snapshot = list(captured_packets)
 
+    # Snapshot of ARP alerts
+    with arp_lock:
+        alerts_snapshot = list(arp_alerts)
+
+    # ARP Alerts section (shown first)
+    if alerts_snapshot:
+        alerts_frame = tk.LabelFrame(analyze_window, text="Threats — ARP Alerts", bg="#1e1e1e", fg="white", labelanchor="n")
+        alerts_frame.pack(fill="x", padx=12, pady=(8, 12))
+
+        # Treeview for alerts
+        acols = ("time", "ip", "old_mac", "new_mac")
+        atree = ttk.Treeview(alerts_frame, columns=acols, show="headings", height=min(6, len(alerts_snapshot)))
+        atree.heading("time", text="Time")
+        atree.heading("ip", text="IP")
+        atree.heading("old_mac", text="Old MAC")
+        atree.heading("new_mac", text="New MAC")
+        atree.pack(fill="x", padx=6, pady=6)
+
+        for a in reversed(alerts_snapshot[-50:]):  # show most recent up to 50
+            ts = time.localtime(a["ts"])
+            ts_s = time.strftime("%Y-%m-%d %H:%M:%S", ts)
+            atree.insert("", "end", values=(ts_s, a["ip"], a["old_mac"], a["new_mac"]))
+
+        # small explanation label
+        tk.Label(alerts_frame, text="Entries above indicate IP addresses that were observed with a different MAC address — possible ARP spoofing.",
+                 fg="#e6e6e6", bg="#1e1e1e", font=("Segoe UI", 10), wraplength=900, justify="left").pack(padx=6, pady=(0,8))
+    else:
+        tk.Label(analyze_window, text="No ARP alerts detected.", fg="white", bg="#1e1e1e", font=("Segoe UI", 11)).pack(pady=6)
+
+    if not snapshot:
+        tk.Label(analyze_window, text="No captured packets yet — run the sniffer first.", fg="white", bg="#1e1e1e", font=("Segoe UI", 12)).pack(pady=20)
+        return
+
+    # Compute protocol counts
+    proto_counter = collections.Counter(p["proto"] for p in snapshot)
+
+    # Top source IPs
+    src_counter = collections.Counter(p["src"] for p in snapshot)
+    top_src = src_counter.most_common(8)  # show top 8
+
+    # Packet time series (per 10-second bins)
+    times = [p["ts"] for p in snapshot]
+    t0 = min(times)
+    # create bins (10-second)
+    bin_size = 10.0
+    bins = {}
+    for ts in times:
+        b = int((ts - t0) // bin_size)
+        bins[b] = bins.get(b, 0) + 1
+    x_bins = sorted(bins.keys())
+    y_counts = [bins[b] for b in x_bins]
+    x_times = [t0 + b * bin_size for b in x_bins]
+    x_labels = [time.strftime("%H:%M:%S", time.localtime(t)) for t in x_times]
+
+    # Create a Matplotlib figure with 3 subplots stacked vertically
+    fig, axes = plt.subplots(3, 1, figsize=(8, 10), constrained_layout=True)
+    fig.patch.set_facecolor("#1e1e1e")
+    # Protocol pie
+    axes[0].pie([v for v in proto_counter.values()], labels=[f"{k} ({v})" for k, v in proto_counter.items()],
+                autopct="%1.1f%%", textprops={"color": "w"})
+    axes[0].set_title("Protocol breakdown", color="w")
+
+    # Top source IPs bar
+    ips, counts = zip(*top_src) if top_src else ([], [])
+    axes[1].barh(range(len(ips)), counts)
+    axes[1].set_yticks(range(len(ips)))
+    axes[1].set_yticklabels(ips)
+    axes[1].invert_yaxis()
+    axes[1].set_title("Top source IPs (by packets)", color="w")
+    # color labels white
+    axes[1].tick_params(axis='x', colors='w')
+    axes[1].tick_params(axis='y', colors='w')
+
+    # Time-series
+    axes[2].plot(x_labels, y_counts, marker='o')
+    axes[2].set_title(f"Packets over time (bin={int(bin_size)}s)", color="w")
+    axes[2].set_ylabel("Packets", color="w")
+    axes[2].tick_params(axis='x', rotation=45, colors='w')
+    axes[2].tick_params(axis='y', colors='w')
+
+    # Set spines / background colors
+    for ax in axes:
+        ax.set_facecolor("#151515")
+        for spine in ax.spines.values():
+            spine.set_color("#333333")
+        for label in (ax.get_xticklabels() + ax.get_yticklabels()):
+            label.set_color("white")
+
+    # Embed the plot in Tkinter
+    canvas = FigureCanvasTkAgg(fig, master=analyze_window)
+    canvas.draw()
+    widget = canvas.get_tk_widget()
+    widget.pack(fill="both", expand=True, padx=10, pady=10)
+
+    # Optional: provide a small textual summary
+    summary_frame = tk.Frame(analyze_window, bg="#1e1e1e")
+    summary_frame.pack(fill="x", padx=12, pady=(0,12))
+    total = len(snapshot)
+    most_proto, most_proto_count = proto_counter.most_common(1)[0]
+    tk.Label(summary_frame, text=f"Total captured packets: {total}", fg="white", bg="#1e1e1e", font=("Segoe UI", 11)).pack(side="left", padx=5)
+    tk.Label(summary_frame, text=f"Most common protocol: {most_proto} ({most_proto_count})", fg="white", bg="#1e1e1e", font=("Segoe UI", 11)).pack(side="left", padx=20)
 
 if __name__ == "__main__":
     app = create_main_window()
