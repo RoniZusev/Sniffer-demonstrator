@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 import matplotlib
-matplotlib.use("Agg")  # avoid GUI backend conflicts; FigureCanvasTkAgg will handle rendering
+matplotlib.use("Agg")  
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import time
@@ -325,7 +325,7 @@ def start_sniffer(parent):
     sniffer_window.mainloop()
 
 def anylaze_problems(parent):
-    # It doesn't destroy menu, open analysis as Toplevel so user can return easily
+    
     analyze_window = tk.Toplevel(parent)
     analyze_window.title("Analyze Malware — Findings")
     analyze_window.geometry("1000x800")
@@ -347,7 +347,6 @@ def anylaze_problems(parent):
     )
     return_btn.place(x=10, y=10)
 
-    # Build aggregated stats from captured_packets (thread-safe snapshot)
     with captured_lock:
         snapshot = list(captured_packets)
 
