@@ -1,14 +1,9 @@
-import tkinter
-from tkinter import ttk
-import threading
 from scapy.layers.inet import IP, TCP, UDP, ICMP
 from scapy.layers.l2 import ARP, Ether
 from scapy.all import sniff
 
-sniffing = False
-
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
 
 import matplotlib
 matplotlib.use("Agg")  
@@ -17,7 +12,9 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import time
 import collections
 import threading
-import datetime
+
+# Start with no sniffing
+sniffing = False
 
 # Shared storage for captured packet summaries (used by Analyze window)
 captured_packets = []
@@ -117,13 +114,18 @@ def create_main_window():
 def start_sniffer(parent):
     global sniffing
     sniffer_window = tk.Toplevel(parent)
-    sniffer_window.state('zoomed')
+    
+    try: # Used to make the program cross platform, as this command is not supported in Linux\Macos
+        sniffer_window.state('zoomed')
+    except tk.TclError:
+        print("'sniffer_window.state('zoomed')' is not supported, ignored")
+
     sniffer_window.title("Sniffer Active")
     sniffer_window.geometry("900x600")
     sniffer_window.configure(bg="#1e1e1e")
 
     # --- Top Label ---
-    label = tkinter.Label(
+    label = tk.Label(
         sniffer_window,
         text="Sniffer Ready!",
         font=("Arial", 20, "bold"),
@@ -133,15 +135,15 @@ def start_sniffer(parent):
     label.pack(pady=10)
 
     # --- Filters ---
-    filter_frame = tkinter.Frame(sniffer_window, bg="#1e1e1e")
+    filter_frame = tk.Frame(sniffer_window, bg="#1e1e1e")
     filter_frame.pack(pady=10)
 
-    tkinter.Label(filter_frame, text="Filter by IP:", fg="white", bg="#1e1e1e").grid(row=0, column=0, padx=5)
-    ip_filter_entry = tkinter.Entry(filter_frame)
+    tk.Label(filter_frame, text="Filter by IP:", fg="white", bg="#1e1e1e").grid(row=0, column=0, padx=5)
+    ip_filter_entry = tk.Entry(filter_frame)
     ip_filter_entry.grid(row=0, column=1, padx=10)
 
-    tkinter.Label(filter_frame, text="Filter by Port:", fg="white", bg="#1e1e1e").grid(row=0, column=2, padx=5)
-    port_filter_entry = tkinter.Entry(filter_frame)
+    tk.Label(filter_frame, text="Filter by Port:", fg="white", bg="#1e1e1e").grid(row=0, column=2, padx=5)
+    port_filter_entry = tk.Entry(filter_frame)
     port_filter_entry.grid(row=0, column=3, padx=10)
 
     # --- Table ---
@@ -282,10 +284,10 @@ def start_sniffer(parent):
         create_main_window()
 
     # --- Buttons ---
-    button_frame = tkinter.Frame(sniffer_window, bg="#1e1e1e")
+    button_frame = tk.Frame(sniffer_window, bg="#1e1e1e")
     button_frame.pack(pady=15)
 
-    start_btn = tkinter.Button(
+    start_btn = tk.Button(
         button_frame,
         text="Start Sniffing",
         font=("Arial", 14),
@@ -297,7 +299,7 @@ def start_sniffer(parent):
     )
     start_btn.grid(row=0, column=0, padx=10)
 
-    stop_btn = tkinter.Button(
+    stop_btn = tk.Button(
         button_frame,
         text="Stop Sniffing",
         font=("Arial", 14),
@@ -310,7 +312,7 @@ def start_sniffer(parent):
     stop_btn.grid(row=0, column=1, padx=10)
 
     # Return button
-    return_btn = tkinter.Button(
+    return_btn = tk.Button(
         sniffer_window,
         text="Return to Menu",
         font=("Arial", 10),
