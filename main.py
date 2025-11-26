@@ -113,7 +113,12 @@ def create_main_window():
 def start_sniffer(parent):
     global sniffing
     sniffer_window = tk.Toplevel(parent)
-    sniffer_window.state('zoomed')
+    
+    try: # Used to make the program cross platform, as this command is not supported in Linux\Macos
+        sniffer_window.state('zoomed')
+    except tk.TclError:
+        print("'sniffer_window.state('zoomed')' is not supported, ignored")
+
     sniffer_window.title("Sniffer Active")
     sniffer_window.geometry("900x600")
     sniffer_window.configure(bg="#1e1e1e")
