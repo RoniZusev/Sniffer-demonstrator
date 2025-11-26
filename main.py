@@ -2,8 +2,6 @@ from scapy.layers.inet import IP, TCP, UDP, ICMP
 from scapy.layers.l2 import ARP, Ether
 from scapy.all import sniff
 
-sniffing = False
-
 import tkinter as tk
 from tkinter import ttk
 
@@ -14,6 +12,9 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import time
 import collections
 import threading
+
+# Start with no sniffing
+sniffing = False
 
 # Shared storage for captured packet summaries (used by Analyze window)
 captured_packets = []
