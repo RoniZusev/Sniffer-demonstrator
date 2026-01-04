@@ -129,7 +129,7 @@ class User:
         global sniffing
         sniffer_window = tk.Toplevel(parent)
 
-        try:  # Used to make the program cross platform, as this command is not supported in Linux\Macos
+        try:
             sniffer_window.state('zoomed')
         except tk.TclError:
             print("'sniffer_window.state('zoomed')' is not supported, ignored")
@@ -179,104 +179,24 @@ class User:
         # --- Packet Processing ---
         def process_packet(packet):
             try:
-                # decide what kind of packet this is and extract common fields
-                proto = "Other"
-                src = "-"
-                dst = "-"
-                port = "-"
+                # 1. Convert Scapy packet to raw bytes
+                raw_payload = bytes(packet)
 
-                if ARP in packet:
-                    src = packet[ARP].psrc
-                    dst = packet[ARP].pdst
-                    proto = "ARP"
-                    port = "-"
+                # 2. Send to server for analysis
+                client_socket.sendall(raw_payload)
 
-                    src_mac = packet[ARP].hwsrc
-                    arp_op = int(packet[ARP].op)  # request=1, reply=2
+                # 3. Receive the analysis result back
+                response = client_socket.recv(1024).decode()
+                # Response format: "PROTO|SRC|DST"
+                proto, src, dst = response.split("|")
 
-                    # update global arp table and detect anomalies
-                    with arp_lock:
-                        prev_mac = arp_table.get(src)
-                        if prev_mac is None:
-                            arp_table[src] = src_mac
-                        else:
-                            if prev_mac != src_mac:
-                                # record an alert (don't block the GUI)
-                                alert = {
-                                    "ts": time.time(),
-                                    "ip": src,
-                                    "old_mac": prev_mac,
-                                    "new_mac": src_mac
-                                }
-                                arp_alerts.append(alert)
-                                # update mapping to the new observed MAC
-                                arp_table[src] = src_mac
-
-                    # fall through to add to captured_packets and Treeview (with ARP tag)
-                elif IP in packet:
-                    # skip mDNS
-                    if UDP in packet and (packet[UDP].sport == 5353 or packet[UDP].dport == 5353):
-                        return
-
-                    src = packet[IP].src
-                    dst = packet[IP].dst
-                    proto = (
-                        "TCP" if TCP in packet
-                        else "UDP" if UDP in packet
-                        else "ICMP" if ICMP in packet
-                        else "IPv6" if packet.haslayer("IPv6")
-                        else "Ethernet" if Ether in packet
-                        else "Other"
-                    )
-
-                    # build port string for TCP/UDP, keep '-' otherwise
-                    port = "-"
-                    if TCP in packet:
-                        port = f"{packet[TCP].sport}->{packet[TCP].dport}"
-                    elif UDP in packet:
-                        port = f"{packet[UDP].sport}->{packet[UDP].dport}"
-                else:
-                    # we don't handle other types here
-                    return
-
-                # apply UI filters (if any)
-                ip_filter = ip_filter_entry.get().strip()
-                port_filter = port_filter_entry.get().strip()
-                if ip_filter and ip_filter not in (src, dst):
-                    return
-                if port_filter and port_filter not in port:
-                    return
-
-                # Thread-safe append to the shared captured_packets list
-                with captured_lock:
-                    # store mac only for ARP to help analysis later
-                    entry = {
-                        "ts": time.time(),
-                        "src": src,
-                        "dst": dst,
-                        "port": port,
-                        "proto": proto
-                    }
-                    if proto == "ARP":
-                        entry["mac"] = packet[ARP].hwsrc
-                    captured_packets.append(entry)
-
-                # Insert into Treeview
-                # If this ARP packet caused a recent alert, tag as ALERT
-                tag = proto
-                # quick check: tag alert if newest arp_alerts refers to this ip and is recent
-                if proto == "ARP":
-                    with arp_lock:
-                        if arp_alerts and arp_alerts[-1]["ip"] == src and (time.time() - arp_alerts[-1]["ts"]) < 2.0:
-                            tag = "ALERT"
-
-                tree.insert("", "end", values=(src, dst, port, proto), tags=(tag,))
+                # 4. Update the GUI (Treeview)
+                # Note: In a real app, use root.after() to update GUI from a thread
+                tree.insert("", "end", values=(src, dst, "-", proto), tags=(proto,))
                 tree.yview_moveto(1)
 
             except Exception as e:
-                # keep sniffing alive; optionally log errors for debug
-                print("process_packet error:", e)
-                return
+                print(f"Transmission error: {e}")
 
         def sniff_thread():
             global sniffing
@@ -379,7 +299,7 @@ class User:
 
             # Treeview for alerts
             acols = ("time", "ip", "old_mac", "new_mac")
-            atree = tk.Treeview(alerts_frame, columns=acols, show="headings", height=min(6, len(alerts_snapshot)))
+            atree = ttk.Treeview(alerts_frame, columns=acols, show="headings", height=min(6, len(alerts_snapshot)))
             atree.heading("time", text="Time")
             atree.heading("ip", text="IP")
             atree.heading("old_mac", text="Old MAC")
@@ -393,7 +313,7 @@ class User:
 
             # small explanation label
             tk.Label(alerts_frame,
-                     text="Entries above indicate IP addresses that were observed with a different MAC address — possible ARP spoofing.",
+                     text= "Entries above indicate IP addresses that were observed with a different MAC address — possible ARP spoofing.",
                      fg="#e6e6e6", bg="#1e1e1e", font=("Segoe UI", 10), wraplength=900, justify="left").pack(padx=6,
                                                                                                              pady=(
                                                                                                              0, 8))
