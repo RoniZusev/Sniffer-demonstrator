@@ -1,8 +1,9 @@
+
 import socket
 import threading
 from scapy.layers.inet import IP, TCP, UDP, ICMP
 from scapy.layers.l2 import ARP, Ether
-from scapy.all import sniff
+from scapy.all import sniff, hexdump
 
 
 class Server:
@@ -11,7 +12,7 @@ class Server:
         self.port = 12345
 
     def analyze_packet(self, packet_bytes):
-        """Reconstructs the packet and determines the protocol."""
+        """Reconstructs the packet and extracts protocol, IPs, and Ports."""
         try:
             # Reconstruct the Scapy packet from raw bytes
             pkt = Ether(packet_bytes)
@@ -19,23 +20,42 @@ class Server:
             proto = "Other"
             src = "Unknown"
             dst = "Unknown"
-            info = ""
+            sport = "-"
+            dport = "-"
 
+            # 1. Check for ARP (Layer 2)
             if ARP in pkt:
                 proto = "ARP"
-                src, dst = pkt[ARP].psrc, pkt[ARP].pdst
+                src = pkt[ARP].psrc
+                dst = pkt[ARP].pdst
+
+            # 2. Check for IP (Layer 3)
             elif IP in pkt:
-                src, dst = pkt[IP].src, pkt[IP].dst
+                src = pkt[IP].src
+                dst = pkt[IP].dst
+
+                # 3. Check for Transport Layer (Layer 4)
                 if TCP in pkt:
                     proto = "TCP"
+                    sport = pkt[TCP].sport
+                    dport = pkt[TCP].dport
                 elif UDP in pkt:
                     proto = "UDP"
+                    sport = pkt[UDP].sport
+                    dport = pkt[UDP].dport
                 elif ICMP in pkt:
                     proto = "ICMP"
+                else:
+                    proto = "IP"
 
-            return f"{proto}|{src}|{dst}"
+            raw_hex = packet_bytes.hex()
+
+            # Return all 5 fields as a pipe-separated string
+            return f"{proto}|{src}|{dst}|{sport}|{dport}|{raw_hex}"
+
         except Exception as e:
-            return f"Error|0.0.0.0|0.0.0.0"
+            print(f"Analysis error: {e}")
+            return "Error|0.0.0.0|0.0.0.0|-|- "
 
     def handle_client(self, conn, addr):
         print(f"[NEW SENSOR] {addr} connected.")
