@@ -134,6 +134,25 @@ class User:
         sniffer_window.geometry("900x600")
         sniffer_window.configure(bg="#1e1e1e")
 
+        # --- Filter Section (Updated to be top-center with 3 entries) ---
+        filter_frame = tk.Frame(sniffer_window, bg="#2d2d2d", pady=10)
+        filter_frame.pack(fill="x")
+
+        center_container = tk.Frame(filter_frame, bg="#2d2d2d")
+        center_container.pack(anchor="center")
+
+        def create_entry(parent, label_text):
+            container = tk.Frame(parent, bg="#2d2d2d")
+            container.pack(side="left", padx=15)
+            tk.Label(container, text=label_text, fg="white", bg="#2d2d2d", font=("Segoe UI", 9, "bold")).pack()
+            ent = tk.Entry(container, bg="#1a1a1a", fg="#00ff00", insertbackground="white", width=20)
+            ent.pack()
+            return ent
+
+        ip_filter = create_entry(center_container, "IP Filter")
+        port_filter = create_entry(center_container, "Port Filter")
+        proto_filter = create_entry(center_container, "Proto Filter")
+
         # --- Table ---
         columns = ("src_ip", "dst_ip", "port", "protocol")
         tree = ttk.Treeview(sniffer_window, columns=columns, show="headings")
@@ -143,22 +162,19 @@ class User:
         tree.heading("protocol", text="Protocol")
         tree.pack(expand=True, fill="both", padx=10, pady=10)
 
-        # צבעים בדיוק כמו המקור שלך
         tree.tag_configure("TCP", foreground="orange")
         tree.tag_configure("UDP", foreground="darkblue")
-        tree.tag_configure("ICMP", foreground="yellow")
+        tree.tag_configure("ICMP", foreground="#D2691E")
         tree.tag_configure("ARP", foreground="lightgreen")
         tree.tag_configure("ALERT", foreground="red")
-        tree.tag_configure("Other", foreground="black")
+        tree.tag_configure("Other", foreground="white")
 
-        # פונקציית לחיצה כפולה להצגת RAW
         def on_packet_select(event):
             selection = tree.selection()
             if not selection: return
             item_id = selection[0]
             values = tree.item(item_id, "values")
             tags = tree.item(item_id, "tags")
-
             raw_hex = tags[1] if len(tags) > 1 else "No raw data available"
 
             details_win = tk.Toplevel(sniffer_window)
@@ -178,22 +194,48 @@ class User:
         # --- Packet Processing ---
         def process_packet(packet):
             try:
-                raw_payload = bytes(packet)
-                client_socket.sendall(raw_payload)
-                response = client_socket.recv(4096).decode()
 
-                # פירוק לפי הפורמט החדש (6 שדות)
+                if not ip_filter.winfo_exists(): return
+
+                raw_payload = bytes(packet)
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
+                    client_socket.connect((server_ip, port))
+                    client_socket.sendall(raw_payload)
+                    response = client_socket.recv(8192).decode()
+
                 parts = response.split("|")
                 if len(parts) < 6: return
 
                 proto, src, dst, sport, dport, raw_hex = parts
                 port_info = f"{sport} > {dport}" if sport != "-" else "-"
 
-                # הכנסה לטבלה עם שמירת ה-Hex ב-Tags
-                tree.insert("", "end", values=(src, dst, port_info, proto), tags=(proto, raw_hex))
-                tree.yview_moveto(1)
+                color_tag = "Other"
+                if proto.startswith("TCP"):
+                    color_tag = "TCP"
+                elif proto.startswith("UDP"):
+                    color_tag = "UDP"
+                elif proto.startswith("ICMP"):
+                    color_tag = "ICMP"
+                elif proto.startswith("ARP"):
+                    color_tag = "ARP"
 
-                # עדכון המחסן לגרפים (התיקון החסר)
+                # --- NEW Triple Filter Logic ---
+                f_ip = ip_filter.get().lower().strip()
+                f_port = port_filter.get().lower().strip()
+                f_proto = proto_filter.get().lower().strip()
+
+                show_packet = True
+                if f_ip and not (f_ip in src.lower() or f_ip in dst.lower()):
+                    show_packet = False
+                if f_port and not (f_port in port_info.lower()):
+                    show_packet = False
+                if f_proto and not (f_proto in proto.lower()):
+                    show_packet = False
+
+                if show_packet:
+                    tree.insert("", "end", values=(src, dst, port_info, proto), tags=(color_tag, raw_hex))
+                    tree.yview_moveto(1)
+
                 with captured_lock:
                     captured_packets.append({
                         "proto": proto,
@@ -203,7 +245,7 @@ class User:
                     })
 
             except Exception as e:
-                print(f"Transmission error: {e}")
+                pass  # Silent error handling for threading/UI close issues
 
         def sniff_thread():
             global sniffing
@@ -211,7 +253,7 @@ class User:
             while sniffing:
                 sniff(count=1, prn=process_packet, store=False)
 
-        # --- Buttons --- (צבעים מקוריים)
+        # --- Buttons ---
         button_frame = tk.Frame(sniffer_window, bg="#1e1e1e")
         button_frame.pack(pady=15)
 
@@ -219,8 +261,12 @@ class User:
                   command=lambda: threading.Thread(target=sniff_thread, daemon=True).start()).grid(row=0, column=0,
                                                                                                    padx=10)
 
+        def stop_sniffing():
+            global sniffing
+            sniffing = False
+
         tk.Button(button_frame, text="Stop Sniffing", font=("Arial", 14), bg="#c00000", fg="white", width=15, height=2,
-                  command=lambda: globals().update(sniffing=False)).grid(row=0, column=1, padx=10)
+                  command=stop_sniffing).grid(row=0, column=1, padx=10)
 
         tk.Button(sniffer_window, text="Return to Menu", bg="#c00000", fg="white", width=15, height=2,
                   command=sniffer_window.destroy).place(x=10, y=10)
@@ -231,34 +277,107 @@ class User:
         analyze_window.geometry("1000x800")
         analyze_window.configure(bg="#1e1e1e")
 
-        # ... שאר הפונקציה anylaze_problems נשארת כפי שכתבת במקור ...
-        # (הגרפים יעבדו עכשיו כי הוספנו את ה-append ב-process_packet)
-        tk.Label(analyze_window, text="Analyze Cyber Attacks — Summary", font=("Arial", 18, "bold"), fg="white",
-                 bg="#1e1e1e").pack(pady=10)
+        header = tk.Label(analyze_window, text="Analyze Cyber Attacks — Summary", font=("Arial", 18, "bold"),
+                          fg="white",
+                          bg="#1e1e1e")
+        header.pack(pady=10)
+
+        return_btn = tk.Button(analyze_window, text="Return to Menu", font=("Arial", 10), bg="#c00000", fg="white",
+                               width=15, height=2, command=analyze_window.destroy)
+        return_btn.place(x=10, y=10)
 
         with captured_lock:
             snapshot = list(captured_packets)
 
+        with arp_lock:
+            alerts_snapshot = list(arp_alerts)
+
+        if alerts_snapshot:
+            alerts_frame = tk.LabelFrame(analyze_window, text="Threats — ARP Alerts", bg="#1e1e1e", fg="white",
+                                         labelanchor="n")
+            alerts_frame.pack(fill="x", padx=12, pady=(8, 12))
+            acols = ("time", "ip", "old_mac", "new_mac")
+            atree = tk.Treeview(alerts_frame, columns=acols, show="headings", height=min(6, len(alerts_snapshot)))
+            atree.heading("time", text="Time")
+            atree.heading("ip", text="IP")
+            atree.heading("old_mac", text="Old MAC")
+            atree.heading("new_mac", text="New MAC")
+            atree.pack(fill="x", padx=6, pady=6)
+            for a in reversed(alerts_snapshot[-50:]):
+                ts = time.localtime(a["ts"])
+                ts_s = time.strftime("%Y-%m-%d %H:%M:%S", ts)
+                atree.insert("", "end", values=(ts_s, a["ip"], a["old_mac"], a["new_mac"]))
+        else:
+            tk.Label(analyze_window, text="No ARP alerts detected.", fg="white", bg="#1e1e1e",
+                     font=("Segoe UI", 11)).pack(pady=6)
+
         if not snapshot:
-            tk.Label(analyze_window, text="No captured packets yet.", fg="white", bg="#1e1e1e").pack(pady=20)
+            tk.Label(analyze_window, text="No captured packets yet — run the sniffer first.", fg="white", bg="#1e1e1e",
+                     font=("Segoe UI", 12)).pack(pady=20)
             return
 
-        # יצירת הגרף בדומה למקור שלך
         proto_counter = collections.Counter(p["proto"] for p in snapshot)
-        fig, ax = plt.subplots(figsize=(6, 6))
+        src_counter = collections.Counter(p["src"] for p in snapshot)
+        top_src = src_counter.most_common(8)
+        times = [p["ts"] for p in snapshot]
+        t0 = min(times)
+        bin_size = 10.0
+        bins = {}
+        for ts in times:
+            b = int((ts - t0) // bin_size)
+            bins[b] = bins.get(b, 0) + 1
+        x_bins = sorted(bins.keys())
+        y_counts = [bins[b] for b in x_bins]
+        x_times = [t0 + b * bin_size for b in x_bins]
+        x_labels = [time.strftime("%H:%M:%S", time.localtime(t)) for t in x_times]
+
+        fig, axes = plt.subplots(3, 1, figsize=(8, 10), constrained_layout=True)
         fig.patch.set_facecolor("#1e1e1e")
-        ax.pie(proto_counter.values(), labels=proto_counter.keys(), autopct="%1.1f%%", textprops={'color': "w"})
-        ax.set_facecolor("#151515")
+        axes[0].pie([v for v in proto_counter.values()], labels=[f"{k} ({v})" for k, v in proto_counter.items()],
+                    autopct="%1.1f%%", textprops={"color": "w"})
+        axes[0].set_title("Protocol breakdown", color="w")
+
+        ips, counts = zip(*top_src) if top_src else ([], [])
+        axes[1].barh(range(len(ips)), counts)
+        axes[1].set_yticks(range(len(ips)))
+        axes[1].set_yticklabels(ips)
+        axes[1].invert_yaxis()
+        axes[1].set_title("Top source IPs (by packets)", color="w")
+        axes[1].tick_params(axis='both', colors='w')
+
+        axes[2].plot(x_labels, y_counts, marker='o')
+        axes[2].set_title(f"Packets over time (bin={int(bin_size)}s)", color="w")
+        axes[2].tick_params(axis='x', rotation=45, colors='w')
+        axes[2].tick_params(axis='y', colors='w')
+
+        for ax in axes:
+            ax.set_facecolor("#151515")
+            for spine in ax.spines.values(): spine.set_color("#333333")
 
         canvas = FigureCanvasTkAgg(fig, master=analyze_window)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+
+        summary_frame = tk.Frame(analyze_window, bg="#1e1e1e")
+        summary_frame.pack(fill="x", padx=12, pady=(0, 12))
+        total = len(snapshot)
+        most_proto, most_proto_count = proto_counter.most_common(1)[0]
+        tk.Label(summary_frame, text=f"Total: {total}", fg="white", bg="#1e1e1e", font=("Segoe UI", 11)).pack(
+            side="left", padx=5)
+        tk.Label(summary_frame, text=f"Most: {most_proto} ({most_proto_count})", fg="white", bg="#1e1e1e",
+                 font=("Segoe UI", 11)).pack(side="left", padx=20)
 
 
 if __name__ == "__main__":
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    hostname = socket.gethostname()
+    local_ip = socket.gethostbyname(hostname)
+    print('my ip is ' + local_ip)
+
     try:
-        client_socket.connect((server_ip, port))
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect((server_ip, port))
+
         user = User()
         root = user.create_main_window()
         root.mainloop()
