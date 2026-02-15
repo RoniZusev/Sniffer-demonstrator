@@ -1,3 +1,4 @@
+
 import socket
 import time
 import tkinter as tk
@@ -18,13 +19,97 @@ port = 12345
 # Start with no sniffing
 sniffing = False
 
-# Shared storage for captured packet summaries (used by Analyze window)
+
 captured_packets = []
 captured_lock = threading.Lock()
 
 arp_table = {}  # {ip: mac}
 arp_alerts = []
 arp_lock = threading.Lock()
+
+
+class Authentication:
+    def __init__(self):
+        # 1. שימוש בשמות משתנים עקביים (server_ip)
+        self.server_ip = '127.0.0.1'
+        self.port = 12345
+        self.username = ""
+        self.password = ""
+        self.authenticated = False
+
+    def authentication_screen(self):
+        root = tk.Tk()
+        root.title("Authentication for the Sniffer")
+        root.configure(bg="#1e1e1e")
+
+        # Window Setup
+        window_width, window_height = 400, 450
+        screen_w = root.winfo_screenwidth()
+        screen_h = root.winfo_screenheight()
+        x = (screen_w - window_width) // 2
+        y = (screen_h - window_height) // 2
+        root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        root.resizable(False, False)
+
+        user_var = tk.StringVar()
+        pass_var = tk.StringVar()
+
+        # UI Elements
+        tk.Label(root, text="Access Control", font=("Segoe UI", 24, "bold"), fg="white", bg="#1e1e1e").pack(
+            pady=(40, 20))
+
+        tk.Label(root, text="Username", font=("Segoe UI", 10), fg="#bdbdbd", bg="#1e1e1e").pack(anchor="w", padx=50)
+        tk.Entry(root, textvariable=user_var, font=("Segoe UI", 12), bg="#2d2d2d", fg="white", borderwidth=0).pack(
+            fill="x", padx=50, pady=(5, 15), ipady=8)
+
+        tk.Label(root, text="Password", font=("Segoe UI", 10), fg="#bdbdbd", bg="#1e1e1e").pack(anchor="w", padx=50)
+        tk.Entry(root, textvariable=pass_var, font=("Segoe UI", 12), bg="#2d2d2d", fg="white", borderwidth=0,
+                 show="●").pack(fill="x", padx=50, pady=(5, 15), ipady=8)
+
+        error_label = tk.Label(root, text="", fg="#ff3333", bg="#1e1e1e", font=("Segoe UI", 9))
+        error_label.pack()
+
+        def on_login():
+            self.username = user_var.get()
+            self.password = pass_var.get()
+
+            if not self.username or not self.password:
+                error_label.config(text="Fields cannot be empty")
+                return
+
+            try:
+                # 2. יצירת סוקט ושליחת נתונים
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(3)
+                    print(f"Connecting to {self.server_ip}:{self.port}...")
+                    s.connect((self.server_ip, self.port))
+
+                    # 3. בניית הפרוטוקול: AUTH|user|pass
+                    auth_payload = f"AUTH|{self.username}|{self.password}"
+                    print(f"Sending: {auth_payload}")
+                    s.sendall(auth_payload.encode())
+
+                    # 4. קבלת תשובה מהשרת
+                    response = s.recv(1024).decode().strip()
+                    print(f"Server response: {response}")
+
+                    if response == "Auth_success":
+                        print("Access Granted!")
+                        self.authenticated = True
+                        root.destroy()
+                    else:
+                        error_label.config(text="Access Denied: Invalid Credentials")
+
+            except Exception as e:
+                print(f"Login error: {e}")
+                error_label.config(text="Connection Failed: Check if Server is running")
+
+        # Login Button
+        tk.Button(root, text="LOGIN", font=("Segoe UI", 12, "bold"), bg="#00a046", fg="white",
+                  cursor="hand2", borderwidth=0, command=on_login).pack(fill="x", padx=50, pady=20, ipady=10)
+
+        root.mainloop()
+        return self.authenticated
 
 
 class User:
@@ -153,7 +238,7 @@ class User:
         port_filter = create_entry(center_container, "Port Filter")
         proto_filter = create_entry(center_container, "Proto Filter")
 
-        # --- Table ---
+
         columns = ("src_ip", "dst_ip", "port", "protocol")
         tree = ttk.Treeview(sniffer_window, columns=columns, show="headings")
         tree.heading("src_ip", text="Source IP")
@@ -191,7 +276,7 @@ class User:
 
         tree.bind("<Double-1>", on_packet_select)
 
-        # --- Packet Processing ---
+
         def process_packet(packet):
             try:
 
@@ -219,7 +304,7 @@ class User:
                 elif proto.startswith("ARP"):
                     color_tag = "ARP"
 
-                # --- NEW Triple Filter Logic ---
+
                 f_ip = ip_filter.get().lower().strip()
                 f_port = port_filter.get().lower().strip()
                 f_proto = proto_filter.get().lower().strip()
@@ -245,7 +330,7 @@ class User:
                     })
 
             except Exception as e:
-                pass  # Silent error handling for threading/UI close issues
+                pass
 
         def sniff_thread():
             global sniffing
@@ -369,17 +454,18 @@ class User:
 
 
 if __name__ == "__main__":
-
+    # בדיקת IP מקומי
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
-    print('my ip is ' + local_ip)
+    print(f"My local IP: {local_ip}")
 
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((server_ip, port))
+    auth = Authentication()
 
+    # מפעיל את מסך הלוגין. הפונקציה מחזירה True רק אם השרת שלח "Auth_success"
+    if auth.authentication_screen():
+        print("Login successful! Opening main window...")
         user = User()
         root = user.create_main_window()
         root.mainloop()
-    except Exception as e:
-        print(f"Failed to connect: {e}")
+    else:
+        print("Authentication failed or window closed.")
