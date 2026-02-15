@@ -7,6 +7,52 @@ from scapy.all import sniff, hexdump
 from scapy.layers.inet6 import IPv6
 
 
+import sqlite3
+
+class UserDatabase:
+    def __init__(self, db_path="users.db"):
+        self.db_path = db_path
+        self._create_table()
+
+    def _get_connection(self):
+        return sqlite3.connect(self.db_path)
+
+    def _create_table(self):
+        query = """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL
+        )
+        """
+        with self._get_connection() as conn:
+            conn.execute(query)
+            conn.execute("INSERT OR IGNORE INTO users (username, password) VALUES (?, ?)", ("admin", "1234"))
+
+    def validate_user(self, username, password):
+        query = "SELECT * FROM users WHERE username = ? AND password = ?"
+        with self._get_connection() as conn:
+            cursor = conn.execute(query, (username, password))
+            result = cursor.fetchone()
+            return result is not None
+
+class Authenticator:
+    def __init__(self):
+        self.db = UserDatabase()
+
+    def handle_auth_request(self, raw_data):
+        try:
+            parts = raw_data.split("|")
+            if len(parts) == 3 and parts[0] == "AUTH":
+                _, user, pwd = parts
+                if self.db.validate_user(user, pwd):
+                    return "SUCCESS"
+            return "FAIL"
+        except Exception as e:
+            print(f"Error in auth logic: {e}")
+            return "FAIL"
+
+
 class Server:
     def __init__(self):
         self.ip = '0.0.0.0'
@@ -96,16 +142,34 @@ class Server:
 
     def handle_client(self, conn, addr):
         print(f"[NEW SENSOR] {addr} connected.")
+        auth_handler = Authenticator()  # יצירת מופע אחד
+
         while True:
             try:
-
-                packet_data = conn.recv(2048)
+                packet_data = conn.recv(8192)
                 if not packet_data:
                     break
 
-                result = self.analyze_packet(packet_data)
+                try:
+                    # מנסים לפענח את הביטים לטקסט
+                    decoded_msg = packet_data.decode('utf-8', errors='ignore')
 
+                    if decoded_msg.startswith("AUTH|"):
+                        result = auth_handler.handle_auth_request(decoded_msg)
+
+                        if result == "SUCCESS":
+                            conn.sendall("Auth_success".encode())
+                            print(f"[AUTH] {addr} Logged in successfully.")
+                        else:
+                            conn.sendall("FAIL".encode())
+
+                        continue
+                except Exception as e:
+                    pass
+
+                result = self.analyze_packet(packet_data)
                 conn.sendall(result.encode())
+
             except Exception as e:
                 print(f"Error handling data: {e}")
                 break
@@ -118,7 +182,6 @@ class Server:
         print(f"[READY] Analysis Server listening on {self.port}")
         while True:
             conn, addr = server_socket.accept()
-            # Fixed the thread target bug here:
             thread = threading.Thread(target=self.handle_client, args=(conn, addr))
             thread.start()
 
