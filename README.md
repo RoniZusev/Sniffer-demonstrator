@@ -28,7 +28,8 @@ There are two options:
 
 ## !*SNIFFER*!
 
-<img width="2554" height="1525" alt="image_2025-12-02_230142550" src="https://github.com/user-attachments/assets/d7bf49de-ab63-4290-90c9-b270bf690d25" />
+<img width="2559" height="1525" alt="Screenshot 2026-04-30 000308" src="https://github.com/user-attachments/assets/b6d49a0a-9c34-4dad-8114-3353abb868d6" />
+
 
 This image represents the sniffer view.  
 As you can see, the packets are divided into columns of:
