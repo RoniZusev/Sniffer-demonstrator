@@ -172,7 +172,7 @@ class Server:
         self.ip = '0.0.0.0'
         self.port = 12345
         self.ui = None
-        # מילון לשמירת החיבורים הפעילים: { "ip:port": socket_object }
+        #  { "ip:port": socket_object }
         self.active_connections = {}
         self.lock = threading.Lock()
 
