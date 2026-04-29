@@ -42,9 +42,17 @@ As you can see, the packets are divided into columns of:
 
 ## !*ANALYZE MALWARE*!
 
-<img width="1486" height="1243" alt="image_2025-12-02_231010672" src="https://github.com/user-attachments/assets/9d4168e8-c1eb-41df-beb5-1e40fc054b25" />
+<img width="2560" height="1494" alt="Packet-Anylize_2026-04-30_00-04-59" src="https://github.com/user-attachments/assets/3b55924b-d5d2-4439-872b-56b529da62e3" />
+
 
 This image shows the analysis page of the sniffer that you launched earlier.
+
+also there is an option to see an Cake chart of the packets distribution
+## !*PACKET DISTRIBUTION CAKE CHART*!
+
+<img width="2560" height="1494" alt="Packet-Anylize_2026-04-29_23-33-54" src="https://github.com/user-attachments/assets/3c06a702-da3b-421a-b0a3-d311fc056c3d" />
+
+
 
 You can see:
 - A **graph of protocol distribution**, showing the most and least common protocols.
