@@ -6,12 +6,23 @@ from tkinter import ttk
 import threading
 
 import matplotlib
+import subprocess
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import collections
 from scapy.all import sniff
+
+from tkinter import filedialog, messagebox
+from PIL import ImageGrab
+
+import ctypes
+
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    pass
 
 server_ip = '127.0.0.1'
 port = 12345
@@ -29,10 +40,9 @@ arp_lock = threading.Lock()
 
 
 class Authentication:
-    def __init__(self):
-        # 1. שימוש בשמות משתנים עקביים (server_ip)
-        self.server_ip = '127.0.0.1'
-        self.port = 12345
+    # מקבלים את השקע כפרמטר
+    def __init__(self, persistent_socket):
+        self.client_socket = persistent_socket
         self.username = ""
         self.password = ""
         self.authenticated = False
@@ -43,7 +53,7 @@ class Authentication:
         root.configure(bg="#1e1e1e")
 
         # Window Setup
-        window_width, window_height = 400, 450
+        window_width, window_height = 600, 650
         screen_w = root.winfo_screenwidth()
         screen_h = root.winfo_screenheight()
         x = (screen_w - window_width) // 2
@@ -69,6 +79,7 @@ class Authentication:
         error_label = tk.Label(root, text="", fg="#ff3333", bg="#1e1e1e", font=("Segoe UI", 9))
         error_label.pack()
 
+        # --- הלוגיקה (Functions) ---
         def on_login():
             self.username = user_var.get()
             self.password = pass_var.get()
@@ -78,51 +89,70 @@ class Authentication:
                 return
 
             try:
-                # 2. יצירת סוקט ושליחת נתונים
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(3)
-                    print(f"Connecting to {self.server_ip}:{self.port}...")
-                    s.connect((self.server_ip, self.port))
+                # משתמשים בחיבור הרציף הקיים! בלי with socket...
+                auth_payload = f"AUTH|{self.username}|{self.password}"
+                print(f"Sending: {auth_payload}")
+                self.client_socket.sendall(auth_payload.encode())
 
-                    # 3. בניית הפרוטוקול: AUTH|user|pass
-                    auth_payload = f"AUTH|{self.username}|{self.password}"
-                    print(f"Sending: {auth_payload}")
-                    s.sendall(auth_payload.encode())
+                response = self.client_socket.recv(1024).decode().strip()
+                print(f"Server response: {response}")
 
-                    # 4. קבלת תשובה מהשרת
-                    response = s.recv(1024).decode().strip()
-                    print(f"Server response: {response}")
-
-                    if response == "Auth_success":
-                        print("Access Granted!")
-                        self.authenticated = True
-                        root.destroy()
-                    else:
-                        error_label.config(text="Access Denied: Invalid Credentials")
-
+                if response == "Auth_success":
+                    print("Access Granted!")
+                    self.authenticated = True
+                    root.destroy()
+                else:
+                    error_label.config(text="Access Denied: Invalid Credentials")
             except Exception as e:
                 print(f"Login error: {e}")
                 error_label.config(text="Connection Failed: Check if Server is running")
 
-        # Login Button
+        def on_register():
+            self.username = user_var.get()
+            self.password = pass_var.get()
+
+            if not self.username or not self.password:
+                error_label.config(text="Fields cannot be empty", fg="#ff3333")
+                return
+
+            try:
+                reg_payload = f"REGISTER|{self.username}|{self.password}"
+                self.client_socket.sendall(reg_payload.encode())
+
+                response = self.client_socket.recv(1024).decode().strip()
+
+                if response == "Reg_success":
+                    error_label.config(text="Registration Successful! You can now LOGIN.", fg="#00ff00")
+                elif response == "Reg_fail_exists":
+                    error_label.config(text="Username already taken. Choose another.", fg="#ff3333")
+                else:
+                    error_label.config(text="Registration Failed.", fg="#ff3333")
+            except Exception as e:
+                error_label.config(text="Connection Failed: Check if Server is running", fg="#ff3333")
+
+        # --- הכפתורים (Buttons) ---
         tk.Button(root, text="LOGIN", font=("Segoe UI", 12, "bold"), bg="#00a046", fg="white",
                   cursor="hand2", borderwidth=0, command=on_login).pack(fill="x", padx=50, pady=20, ipady=10)
+
+        tk.Button(root, text="REGISTER", font=("Segoe UI", 12, "bold"), bg="#2d2d2d", fg="#00a046",
+                  cursor="hand2", borderwidth=1, command=on_register).pack(fill="x", padx=50, pady=(0, 20), ipady=10)
 
         root.mainloop()
         return self.authenticated
 
-
 class User:
 
-    def __init__(self):
-        self.ip = '127.0.0.1'
+    def __init__(self, persistent_socket):
+            self.analysis_socket = persistent_socket
+            self.ip = '127.0.0.1'
+            self.local_ip = socket.gethostbyname(socket.gethostname())
 
     def create_main_window(self):
         root = tk.Tk()
         root.title("Roni's Sniffer")
         root.configure(bg="#1e1e1e")
 
-        window_width, window_height = 900, 540
+        window_width, window_height = 1100, 740
         screen_w = root.winfo_screenwidth()
         screen_h = root.winfo_screenheight()
         x = (screen_w - window_width) // 2
@@ -238,6 +268,18 @@ class User:
         port_filter = create_entry(center_container, "Port Filter")
         proto_filter = create_entry(center_container, "Proto Filter")
 
+        only_my_ip_var = tk.BooleanVar(value=False)
+
+        my_ip_toggle = tk.Checkbutton(
+            filter_frame,
+            text=f"Local Host ({self.local_ip})",
+            variable=only_my_ip_var,
+            bg="#2d2d2d", fg="#00ff00", selectcolor="#1a1a1a",
+            activebackground="#2d2d2d", activeforeground="white",
+            font=("Segoe UI", 10, "bold")
+        )
+        my_ip_toggle.place(relx=0.98, rely=0.5, anchor="e")
+
 
         columns = ("src_ip", "dst_ip", "port", "protocol")
         tree = ttk.Treeview(sniffer_window, columns=columns, show="headings")
@@ -283,16 +325,32 @@ class User:
                 if not ip_filter.winfo_exists(): return
 
                 raw_payload = bytes(packet)
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
-                    client_socket.connect((server_ip, port))
-                    client_socket.sendall(raw_payload)
-                    response = client_socket.recv(8192).decode()
+
+                # שולחים את הפאקטה ישירות על הצינור הפתוח!
+                self.analysis_socket.sendall(raw_payload)
+                response = self.analysis_socket.recv(8192).decode()
 
                 parts = response.split("|")
-                if len(parts) < 6: return
+                if len(parts) < 8: return
 
-                proto, src, dst, sport, dport, raw_hex = parts
+                proto, src, dst, sport, dport, src_mac, dst_mac, raw_hex = parts[:8]
                 port_info = f"{sport} > {dport}" if sport != "-" else "-"
+
+                #arp_posioning
+                if proto.startswith("ARP") and src != "Unknown" and src != "0.0.0.0":
+                    if src in arp_table:
+
+                        if arp_table[src] != src_mac:
+                            with arp_lock:
+                                arp_alerts.append({
+                                    "ts": time.time(),
+                                    "ip": src,
+                                    "old_mac": arp_table[src],
+                                    "new_mac": src_mac
+                                })
+                    else:
+                        # אם ה-IP חדש, נלמד ונשמור את ה-MAC החוקי שלו
+                        arp_table[src] = src_mac
 
                 color_tag = "Other"
                 if proto.startswith("TCP"):
@@ -304,22 +362,27 @@ class User:
                 elif proto.startswith("ARP"):
                     color_tag = "ARP"
 
-
                 f_ip = ip_filter.get().lower().strip()
                 f_port = port_filter.get().lower().strip()
                 f_proto = proto_filter.get().lower().strip()
 
                 show_packet = True
-                if f_ip and not (f_ip in src.lower() or f_ip in dst.lower()):
+
+                if only_my_ip_var.get():
+                    if self.local_ip != src and self.local_ip != dst:
+                        show_packet = False
+
+                if show_packet and f_ip and not (f_ip in src.lower() or f_ip in dst.lower()):
                     show_packet = False
-                if f_port and not (f_port in port_info.lower()):
+                if show_packet and f_port and not (f_port in port_info.lower()):
                     show_packet = False
-                if f_proto and not (f_proto in proto.lower()):
+                if show_packet and f_proto and not (f_proto in proto.lower()):
                     show_packet = False
 
                 if show_packet:
                     tree.insert("", "end", values=(src, dst, port_info, proto), tags=(color_tag, raw_hex))
                     tree.yview_moveto(1)
+
 
                 with captured_lock:
                     captured_packets.append({
@@ -335,8 +398,13 @@ class User:
         def sniff_thread():
             global sniffing
             sniffing = True
-            while sniffing:
-                sniff(count=1, prn=process_packet, store=False)
+            # מדליקים את הסניפר פעם אחת ברצף!
+            sniff(prn=process_packet, store=False, stop_filter=stop_check)
+
+        def stop_check(packet):
+            # הפונקציה הזו בודקת אחרי כל פאקטה אם צריך לעצור
+            global sniffing
+            return not sniffing
 
         # --- Buttons ---
         button_frame = tk.Frame(sniffer_window, bg="#1e1e1e")
@@ -359,17 +427,69 @@ class User:
     def anylaze_problems(self, parent):
         analyze_window = tk.Toplevel(parent)
         analyze_window.title("Analyze Malware — Findings")
-        analyze_window.geometry("1000x800")
+        try:
+            analyze_window.state('zoomed')
+        except:
+            analyze_window.geometry("1400x900")
+
         analyze_window.configure(bg="#1e1e1e")
 
+        # 1. כותרת יחידה
         header = tk.Label(analyze_window, text="Analyze Cyber Attacks — Summary", font=("Arial", 18, "bold"),
-                          fg="white",
-                          bg="#1e1e1e")
+                          fg="white", bg="#1e1e1e")
         header.pack(pady=10)
 
+        # 2. כפתור חזור יחיד בצד שמאל
         return_btn = tk.Button(analyze_window, text="Return to Menu", font=("Arial", 10), bg="#c00000", fg="white",
                                width=15, height=2, command=analyze_window.destroy)
         return_btn.place(x=10, y=10)
+
+        # 3. כפתור צילום מסך בצד ימין
+        capture_btn = tk.Button(
+            analyze_window,
+            text="📸 Capture Screenshot",
+            font=("Arial", 10, "bold"),
+            bg="#00a046", fg="white",
+            width=20, height=2,
+            command=lambda: User._capture_active_window(analyze_window)
+        )
+        capture_btn.place(relx=0.98, x=0, y=10, anchor="ne")
+
+        pie_btn = tk.Button(
+            analyze_window,
+            text="📊 Protocol Chart",
+            font=("Arial", 10, "bold"),
+            bg="#005088", fg="white",
+            width=20, height=2,
+            command=lambda: self.show_pie_chart(proto_counter)
+        )
+
+        pie_btn.place(relx=0.98, x=-260, y=10, anchor="ne")
+
+        with captured_lock:
+            snapshot = list(captured_packets)
+
+        # ספירת הפאקטות מכל IP (כדי שנוכל להציע חסימה)
+        src_counter = collections.Counter(p["src"] for p in snapshot)
+
+        # רף לזיהוי: 200 פאקטות
+        threat_ips = {ip: count for ip, count in src_counter.items()
+                      if count > 150 and ip != self.local_ip}
+
+        if threat_ips:
+            threats_frame = tk.LabelFrame(analyze_window, text="🚨 ACTIVE THREATS (Possible DoS) 🚨",
+                                          bg="#330000", fg="#ff4444", font=("Segoe UI", 12, "bold"), labelanchor="n")
+            threats_frame.pack(fill="x", padx=12, pady=(12, 0))
+
+            for ip, count in threat_ips.items():
+                threat_row = tk.Frame(threats_frame, bg="#330000")
+                threat_row.pack(fill="x", padx=10, pady=5)
+
+                tk.Label(threat_row, text=f"Suspicious IP: {ip}  |  Packets: {count}",
+                         bg="#330000", fg="white", font=("Segoe UI", 11)).pack(side="left")
+
+                tk.Button(threat_row, text="🛡️ BLOCK", bg="#cc0000", fg="white", font=("Segoe UI", 10, "bold"),
+                          command=lambda current_ip=ip: User.block_ip_in_firewall(current_ip)).pack(side="right")
 
         with captured_lock:
             snapshot = list(captured_packets)
@@ -416,24 +536,23 @@ class User:
         x_times = [t0 + b * bin_size for b in x_bins]
         x_labels = [time.strftime("%H:%M:%S", time.localtime(t)) for t in x_times]
 
-        fig, axes = plt.subplots(3, 1, figsize=(8, 10), constrained_layout=True)
+        fig, axes = plt.subplots(2, 1, figsize=(8, 8), constrained_layout=True)
         fig.patch.set_facecolor("#1e1e1e")
-        axes[0].pie([v for v in proto_counter.values()], labels=[f"{k} ({v})" for k, v in proto_counter.items()],
-                    autopct="%1.1f%%", textprops={"color": "w"})
-        axes[0].set_title("Protocol breakdown", color="w")
 
+        # גרף 1: Top IPs (שהיה פעם axes[1], עכשיו הוא axes[0])
         ips, counts = zip(*top_src) if top_src else ([], [])
-        axes[1].barh(range(len(ips)), counts)
-        axes[1].set_yticks(range(len(ips)))
-        axes[1].set_yticklabels(ips)
-        axes[1].invert_yaxis()
-        axes[1].set_title("Top source IPs (by packets)", color="w")
-        axes[1].tick_params(axis='both', colors='w')
+        axes[0].barh(range(len(ips)), counts, color="#00a046")
+        axes[0].set_yticks(range(len(ips)))
+        axes[0].set_yticklabels(ips)
+        axes[0].invert_yaxis()
+        axes[0].set_title("Top Source IPs (by packets)", color="w")
+        axes[0].tick_params(axis='both', colors='w')
 
-        axes[2].plot(x_labels, y_counts, marker='o')
-        axes[2].set_title(f"Packets over time (bin={int(bin_size)}s)", color="w")
-        axes[2].tick_params(axis='x', rotation=45, colors='w')
-        axes[2].tick_params(axis='y', colors='w')
+        # גרף 2: Packets over time (שהיה פעם axes[2], עכשיו הוא axes[1])
+        axes[1].plot(x_labels, y_counts, marker='o', color="#ff4444")
+        axes[1].set_title(f"Packets over time (bin={int(bin_size)}s)", color="w")
+        axes[1].tick_params(axis='x', rotation=45, colors='w')
+        axes[1].tick_params(axis='y', colors='w')
 
         for ax in axes:
             ax.set_facecolor("#151515")
@@ -452,20 +571,167 @@ class User:
         tk.Label(summary_frame, text=f"Most: {most_proto} ({most_proto_count})", fg="white", bg="#1e1e1e",
                  font=("Segoe UI", 11)).pack(side="left", padx=20)
 
+    @staticmethod
+    def _save_screenshot_to_file(image_object):
+        try:
+
+            current_time = time.strftime("%Y-%m-%d_%H-%M-%S")
+
+            fpath = filedialog.asksaveasfilename(
+                defaultextension=".png",  # סיומת ברירת מחדל
+                initialfile=f"Packet-Anylize_{current_time}.png",
+                title="Save Packet Analysis Screenshot As...",
+                filetypes=[("PNG Image", "*.png"), ("JPG Image", "*.jpg"), ("All Files", "*.*")]
+            )
+
+            if fpath:
+                image_object.save(fpath)
+                # מציג הודעת הצלחה קטנה (TopLevel) מעל מסך הניתוח
+                messagebox.showinfo("Success", f"Screenshot saved to:\n{fpath}")
+        except Exception as e:
+
+            messagebox.showerror("Error", f"Failed to save screenshot:\n{str(e)}")
+
+    @staticmethod
+    def _capture_active_window(window_object):
+        """תופסת צילום של החלון הספציפי שקיבלה, פותחת דיאלוג שמירה ושומרת."""
+        try:
+            # שלב א': חישוב הקואורדינטות הלוגיות של החלון
+            x = window_object.winfo_rootx()
+            y = window_object.winfo_rooty()
+            w = window_object.winfo_width()
+            h = window_object.winfo_height()
+
+            bbox = (x, y, x + w, y + h)
+
+            screenshot = ImageGrab.grab(bbox=bbox)
+            # ---------------------
+
+            # שלב ג': שליחה לפונקציית השמירה
+            User._save_screenshot_to_file(screenshot)
+        except Exception as e:
+            messagebox.showerror("Capture Error", f"Could not capture window:\n{str(e)}")
+
+    def show_pie_chart(self, proto_counter):
+        # יצירת החלון
+        pie_win = tk.Toplevel()
+        pie_win.title("Protocol Breakdown Chart")
+        # נגדיל קצת את החלון כדי לתת מקום לכפתור
+        pie_win.geometry("650x620")
+        pie_win.configure(bg="#1e1e1e")
+
+        #  הוספה: כפתור צילום מסך בתוך חלון העוגה
+        capture_btn = tk.Button(
+            pie_win,
+            text="📸 Capture Diagram",
+            font=("Arial", 10, "bold"),
+            bg="#00a046", fg="white",
+            width=20, height=2,
+            # שימוש ב-lambda כדי להעביר את 'pie_win' לצילום
+            command=lambda: User._capture_active_window(pie_win)
+        )
+        # נמקם אותו בפינה הימנית העליונה עם שוליים
+        capture_btn.pack(anchor="ne", padx=10, pady=10)
+
+        fig, ax = plt.subplots(figsize=(6, 5), constrained_layout=True)
+        fig.patch.set_facecolor("#1e1e1e")
+        ax.set_facecolor("#1e1e1e")
+
+        total_packets = sum(proto_counter.values())
+        threshold = total_packets * 0.05
+        filtered_protos = {}
+        other_count = 0
+
+        for k, v in proto_counter.items():
+            if v >= threshold:
+                filtered_protos[k] = v
+            else:
+                other_count += v
+
+        if other_count > 0:
+            filtered_protos["Other (<5%)"] = other_count
+
+        wedges, texts, autotexts = ax.pie(
+            filtered_protos.values(),
+            autopct="%1.1f%%",
+            textprops={"color": "w", "weight": "bold"},
+            startangle=90
+        )
+
+        # הוספת מקרא מסודר בצד שמאל
+        ax.legend(
+            wedges,
+            [f"{k} ({v} pkts)" for k, v in filtered_protos.items()],
+            title="Protocols",
+            loc="center left",
+            bbox_to_anchor=(0.9, 0, 0.5, 1),
+            labelcolor="white"
+        )
+        ax.set_title("Protocol Distribution", color="white", fontdict={'fontsize': 16, 'fontweight': 'bold'})
+
+        canvas = FigureCanvasTkAgg(fig, master=pie_win)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=20, pady=(0, 20))
+
+    @staticmethod
+    def block_ip_in_firewall(ip_address):
+        """חוסם כתובת IP נכנסת ב-Windows Firewall באמצעות פקודת netsh."""
+        rule_name = f"Sniffer_Block_{ip_address}"
+
+        command = [
+            "netsh", "advfirewall", "firewall", "add", "rule",
+            f"name={rule_name}",
+            "dir=in",
+            "action=block",
+            f"remoteip={ip_address}"
+        ]
+
+        try:
+            # מריץ את הפקודה. שים לב: זה דורש שהפייתון ירוץ כ-Administrator!
+            result = subprocess.run(command, capture_output=True, text=True, check=True)
+            messagebox.showinfo("Firewall Updated", f"Successfully blocked IP:\n{ip_address}\n\nRule Name: {rule_name}")
+        except subprocess.CalledProcessError as e:
+            error_msg = f"Failed to block IP {ip_address}.\nMake sure you are running the IDE/Terminal as Administrator.\n\nError: {e.stderr}"
+            messagebox.showerror("Firewall Error", error_msg)
+
 
 if __name__ == "__main__":
-    # בדיקת IP מקומי
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
     print(f"My local IP: {local_ip}")
 
-    auth = Authentication()
+    # פרטי השרת (שנה ל-IP של השרת שלך)
+    server_ip = '127.0.0.1'
+    server_port = 12345
 
-    # מפעיל את מסך הלוגין. הפונקציה מחזירה True רק אם השרת שלח "Auth_success"
-    if auth.authentication_screen():
-        print("Login successful! Opening main window...")
-        user = User()
-        root = user.create_main_window()
-        root.mainloop()
-    else:
-        print("Authentication failed or window closed.")
+    # 1. יוצרים את החיבור פעם אחת וזהו!
+    main_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    try:
+        main_socket.settimeout(5)  # נותנים לו 5 שניות לנסות להתחבר
+        print("Connecting to server...")
+        main_socket.connect((server_ip, server_port))
+        main_socket.settimeout(None)  # מחזירים למצב רגיל אחרי שהתחברנו
+        print("[CONNECTED] Persistent link established.")
+
+        # 2. מעבירים את החיבור ("מזריקים" אותו) למחלקת ההתחברות
+        auth = Authentication(main_socket)
+
+        if auth.authentication_screen():
+            print("Login successful!")
+            # 3. מעבירים את אותו חיבור בדיוק למחלקת הלקוח
+            user = User(main_socket)
+            root = user.create_main_window()
+            root.mainloop()
+        else:
+            print("Authentication failed or window closed.")
+
+    except Exception as e:
+        # אם השרת למטה, אנחנו תופסים את זה כאן ולא פותחים שום חלון
+        print(f"[FATAL ERROR] Could not connect to the server: {e}")
+        messagebox.showerror("Connection Error", "Cannot reach the Analysis Server. Is it running?")
+
+    finally:
+        # 4. לא משנה מה קרה (שגיאה, או שהמשתמש סגר את התוכנה) - אנחנו סוגרים את הצינור
+        main_socket.close()
+        print("[DISCONNECTED] Socket closed safely.")
