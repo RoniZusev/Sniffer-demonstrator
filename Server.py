@@ -1,13 +1,13 @@
 import socket
 import threading
+import tkinter as tk
+from tkinter import ttk, messagebox
 from scapy.layers.inet import IP, TCP, UDP, ICMP
 from scapy.layers.l2 import ARP, Ether
 from scapy.layers.inet6 import IPv6
 from scapy.all import sniff, hexdump
-from scapy.layers.inet6 import IPv6
-
-
 import sqlite3
+
 
 class UserDatabase:
     def __init__(self, db_path="users.db"):
@@ -36,6 +36,16 @@ class UserDatabase:
             result = cursor.fetchone()
             return result is not None
 
+    def register_user(self, username, password):
+        query = "INSERT INTO users (username, password) VALUES (?, ?)"
+        try:
+            with self._get_connection() as conn:
+                conn.execute(query, (username, password))
+                return True
+        except sqlite3.IntegrityError:
+            return False
+
+
 class Authenticator:
     def __init__(self):
         self.db = UserDatabase()
@@ -43,148 +53,223 @@ class Authenticator:
     def handle_auth_request(self, raw_data):
         try:
             parts = raw_data.split("|")
-            if len(parts) == 3 and parts[0] == "AUTH":
-                _, user, pwd = parts
-                if self.db.validate_user(user, pwd):
-                    return "SUCCESS"
-            return "FAIL"
+            if len(parts) == 3:
+                action, user, pwd = parts
+
+                # התחברות
+                if action == "AUTH":
+                    if self.db.validate_user(user, pwd):
+                        return "SUCCESS", user
+
+                # הרשמה
+                elif action == "REGISTER":
+                    if self.db.register_user(user, pwd):
+                        return "REG_SUCCESS", user
+                    else:
+                        return "REG_FAIL_EXISTS", None
+
+            return "FAIL", None
+
         except Exception as e:
             print(f"Error in auth logic: {e}")
-            return "FAIL"
+            return "FAIL", None
+
+
+class ServerGUI:
+    def __init__(self, root, server_instance):
+        self.root = root
+        self.server = server_instance
+        self.root.title("NetDefender - Command & Control Center")
+        self.root.geometry("900x650")
+        self.root.configure(bg="#0b0f19")
+
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("Treeview", background="#151b2b", foreground="#e0e0e0", fieldbackground="#151b2b", rowheight=35,
+                        font=("Segoe UI", 10))
+        style.map("Treeview", background=[("selected", "#c0392b")])  # צבע אדום כשבוחרים שורה לניתוק
+        style.configure("Treeview.Heading", font=("Segoe UI", 11, "bold"), background="#0b0f19", foreground="#00ffcc",
+                        borderwidth=0)
+
+        # Header
+        header_frame = tk.Frame(self.root, bg="#0b0f19")
+        header_frame.pack(fill="x", pady=(20, 10), padx=25)
+        tk.Label(header_frame, text="🛡️ NetDefender C&C Server", font=("Segoe UI", 22, "bold"), fg="#ffffff",
+                 bg="#0b0f19").pack(side="left")
+        self.status_lbl = tk.Label(header_frame, text="● SERVER ONLINE", font=("Consolas", 14, "bold"), fg="#00ffcc",
+                                   bg="#0b0f19")
+        self.status_lbl.pack(side="right")
+
+        # Stats & Controls
+        control_frame = tk.Frame(self.root, bg="#151b2b", highlightbackground="#2a3441", highlightthickness=1)
+        control_frame.pack(fill="x", padx=25, pady=(0, 20), ipadx=10, ipady=10)
+
+        self.active_count_var = tk.IntVar(value=0)
+        tk.Label(control_frame, text="Active Sensors:", font=("Segoe UI", 12), fg="#a0aabf", bg="#151b2b").pack(
+            side="left", padx=10)
+        tk.Label(control_frame, textvariable=self.active_count_var, font=("Segoe UI", 16, "bold"), fg="#ffffff",
+                 bg="#151b2b").pack(side="left")
+
+        # כפתור הניתוק
+        self.kick_btn = tk.Button(control_frame, text="🛑 TERMINATE SENSOR", font=("Segoe UI", 10, "bold"),
+                                  bg="#c0392b", fg="white", activebackground="#e74c3c", cursor="hand2",
+                                  command=self.request_disconnect, borderwidth=0, padx=20)
+        self.kick_btn.pack(side="right", padx=10)
+
+        # Table
+        table_frame = tk.Frame(self.root, bg="#0b0f19")
+        table_frame.pack(expand=True, fill="both", padx=25, pady=(0, 25))
+
+        columns = ("ip", "port", "status", "user")
+        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        for col in columns: self.tree.heading(col, text=col.replace("_", " ").title())
+
+        self.tree.tag_configure("oddrow", background="#1a2133")
+        self.tree.tag_configure("evenrow", background="#151b2b")
+        self.tree.tag_configure("auth", foreground="#00ffcc", font=("Segoe UI", 10, "bold"))
+        self.tree.pack(expand=True, fill="both")
+        self.row_counter = 0
+
+    def request_disconnect(self):
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Selection Required", "Please select a sensor from the list to disconnect.")
+            return
+
+        sensor_id = selected[0]  # ה-ID הוא ה-ip:port
+        if messagebox.askyesno("Confirm Termination", f"Are you sure you want to disconnect sensor {sensor_id}?"):
+            self.server.kick_client(sensor_id)
+
+    def add_client(self, addr):
+        uid = f"{addr[0]}:{addr[1]}"
+        tag = "evenrow" if self.row_counter % 2 == 0 else "oddrow"
+        self.row_counter += 1
+        self.root.after(0, lambda: self.tree.insert("", "end", iid=uid,
+                                                    values=(addr[0], addr[1], "Pending Auth...", "Waiting..."),
+                                                    tags=(tag,)))
+        self.root.after(0, lambda: self.active_count_var.set(self.active_count_var.get() + 1))
+
+    def update_client_auth(self, addr, username):
+        uid = f"{addr[0]}:{addr[1]}"
+        self.root.after(0, lambda: self._update_row(uid, addr[0], addr[1], "Authenticated ✓", username))
+
+    def _update_row(self, uid, ip, port, status, user):
+        if self.tree.exists(uid):
+            new_tags = tuple(set(self.tree.item(uid, "tags")) | {"auth"})
+            self.tree.item(uid, values=(ip, port, status, user), tags=new_tags)
+
+    def remove_client(self, addr_str):
+        self.root.after(0, lambda: self._delete_row(addr_str))
+
+    def _delete_row(self, uid):
+        if self.tree.exists(uid):
+            self.tree.delete(uid)
+            self.active_count_var.set(max(0, self.active_count_var.get() - 1))
 
 
 class Server:
     def __init__(self):
         self.ip = '0.0.0.0'
         self.port = 12345
+        self.ui = None
+        # מילון לשמירת החיבורים הפעילים: { "ip:port": socket_object }
+        self.active_connections = {}
+        self.lock = threading.Lock()
 
+    def kick_client(self, addr_str):
+        with self.lock:
+            if addr_str in self.active_connections:
+                print(f"[KICK] Manually disconnecting {addr_str}")
+                try:
+                    # סגירת הסוקט תגרום ל-recv ב-Thread של הלקוח להיכשל ולצאת בצורה מסודרת
+                    self.active_connections[addr_str].shutdown(socket.SHUT_RDWR)
+                    self.active_connections[addr_str].close()
+                except Exception as e:
+                    print(f"Error kicking client: {e}")
 
     def analyze_packet(self, packet_bytes):
-
         try:
-            # Reconstruct the Scapy packet from raw bytes
             pkt = Ether(packet_bytes)
+            try:
+                src_mac, dst_mac = pkt.src, pkt.dst
+            except:
+                src_mac, dst_mac = "-", "-"
 
-            proto = "Other"
-            src = "Unknown"
-            dst = "Unknown"
-            sport = "-"
-            dport = "-"
+            proto, src, dst, sport, dport = "Other", "Unknown", "Unknown", "-", "-"
 
-            # 1. Check for ARP (Layer 2)
-            if ARP in pkt:
+            if pkt.type == 0x0806 or ARP in pkt:
                 proto = "ARP"
-                src = pkt[ARP].psrc
-                dst = pkt[ARP].pdst
-
-            # 2. Check for IPv4 (Layer 3)
+                if ARP in pkt: src, dst = pkt[ARP].psrc, pkt[ARP].pdst
             elif IP in pkt:
-                src = pkt[IP].src
-                dst = pkt[IP].dst
-
-                # 3. Check for Transport Layer (Layer 4)
+                src, dst = pkt[IP].src, pkt[IP].dst
                 if TCP in pkt:
-                    proto = "TCP"
-                    sport = pkt[TCP].sport
-                    dport = pkt[TCP].dport
-                    if dport == 443 or sport == 443:
-                        proto += "- https"
-                    elif dport == 80 or sport == 80:
-                        proto += "- http"
-                    if dport == 53 or sport == 53 or dport ==5353 or sport ==5353:
-                        proto += "- DNS"
+                    proto, sport, dport = "TCP", pkt[TCP].sport, pkt[TCP].dport
                 elif UDP in pkt:
-                    proto = "UDP"
-                    sport = pkt[UDP].sport
-                    dport = pkt[UDP].dport
-                    if dport == 443 or sport == 443:
-                        proto += "- https"
-                    elif dport == 80 or sport == 80:
-                        proto += "- http"
+                    proto, sport, dport = "UDP", pkt[UDP].sport, pkt[UDP].dport
                 elif ICMP in pkt:
                     proto = "ICMP"
-                else:
-                    proto = "IPv4"
-
-            # 4. Check for IPv6 (Layer 3)
             elif IPv6 in pkt:
-                src = pkt[IPv6].src
-                dst = pkt[IPv6].dst
-
-                # Check transport layer inside IPv6
+                src, dst = pkt[IPv6].src, pkt[IPv6].dst
                 if TCP in pkt:
                     proto = "TCPv6"
-                    sport = pkt[TCP].sport
-                    dport = pkt[TCP].dport
-                    if dport == 443 or sport == 443:
-                        proto += "- https"
-                    elif dport == 80 or sport == 80:
-                        proto += "- http"
                 elif UDP in pkt:
                     proto = "UDPv6"
-                    sport = pkt[UDP].sport
-                    dport = pkt[UDP].dport
-                    if dport == 443 or sport == 443:
-                        proto += "- https"
-                    elif dport == 80 or sport == 80:
-                        proto += "- http"
-                else:
-                    proto = "IPv6"
 
-            raw_hex = packet_bytes.hex()
-
-            # Return all fields as a pipe-separated string
-            return f"{proto}|{src}|{dst}|{sport}|{dport}|{raw_hex}"
-
-        except Exception as e:
-            print(f"Analysis error: {e}")
-            return "Error|0.0.0.0|0.0.0.0|-|-|"
+            return f"{proto}|{src}|{dst}|{sport}|{dport}|{src_mac}|{dst_mac}|{packet_bytes.hex()}"
+        except:
+            return "Error|0.0.0.0|0.0.0.0|-|-|-|-|"
 
     def handle_client(self, conn, addr):
-        print(f"[NEW SENSOR] {addr} connected.")
-        auth_handler = Authenticator()  # יצירת מופע אחד
+        addr_str = f"{addr[0]}:{addr[1]}"
+        with self.lock:
+            self.active_connections[addr_str] = conn
+
+        self.ui.add_client(addr)
+        auth_handler = Authenticator()
 
         while True:
             try:
-                packet_data = conn.recv(8192)
-                if not packet_data:
-                    break
+                data = conn.recv(8192)
+                if not data: break
 
-                try:
-                    # מנסים לפענח את הביטים לטקסט
-                    decoded_msg = packet_data.decode('utf-8', errors='ignore')
+                msg = data.decode('utf-8', errors='ignore')
+                if msg.startswith("AUTH|") or msg.startswith("REGISTER|"):
+                    res, user = auth_handler.handle_auth_request(msg)
+                    if res == "SUCCESS":
+                        conn.sendall("Auth_success".encode())
+                        self.ui.update_client_auth(addr, user)
+                    else:
+                        conn.sendall(res.encode() if "REG" in res else "FAIL".encode())
+                    continue
 
-                    if decoded_msg.startswith("AUTH|"):
-                        result = auth_handler.handle_auth_request(decoded_msg)
+                analysis = self.analyze_packet(data)
+                conn.sendall(analysis.encode())
 
-                        if result == "SUCCESS":
-                            conn.sendall("Auth_success".encode())
-                            print(f"[AUTH] {addr} Logged in successfully.")
-                        else:
-                            conn.sendall("FAIL".encode())
-
-                        continue
-                except Exception as e:
-                    pass
-
-                result = self.analyze_packet(packet_data)
-                conn.sendall(result.encode())
-
-            except Exception as e:
-                print(f"Error handling data: {e}")
+            except:
                 break
+
+        with self.lock:
+            if addr_str in self.active_connections:
+                del self.active_connections[addr_str]
+
+        self.ui.remove_client(addr_str)
         conn.close()
 
-    def start_server(self):
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.bind((self.ip, self.port))
-        server_socket.listen()
-        print(f"[READY] Analysis Server listening on {self.port}")
-        while True:
-            conn, addr = server_socket.accept()
-            thread = threading.Thread(target=self.handle_client, args=(conn, addr))
-            thread.start()
+    def start(self):
+        root = tk.Tk()
+        self.ui = ServerGUI(root, self)
+
+        def listen_loop():
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind((self.ip, self.port))
+            s.listen()
+            while True:
+                c, a = s.accept()
+                threading.Thread(target=self.handle_client, args=(c, a), daemon=True).start()
+
+        threading.Thread(target=listen_loop, daemon=True).start()
+        root.mainloop()
 
 
 if __name__ == "__main__":
-    Server().start_server()
+    Server().start()
