@@ -7,6 +7,7 @@ from scapy.layers.l2 import ARP, Ether
 from scapy.layers.inet6 import IPv6
 from scapy.all import sniff, hexdump
 import sqlite3
+import bcrypt
 
 
 class UserDatabase:
@@ -27,24 +28,40 @@ class UserDatabase:
         """
         with self._get_connection() as conn:
             conn.execute(query)
-            conn.execute("INSERT OR IGNORE INTO users (username, password) VALUES (?, ?)", ("admin", "1234"))
 
-    def validate_user(self, username, password):
-        query = "SELECT * FROM users WHERE username = ? AND password = ?"
-        with self._get_connection() as conn:
-            cursor = conn.execute(query, (username, password))
-            result = cursor.fetchone()
-            return result is not None
+            cursor = conn.execute("SELECT * FROM users WHERE username = ?", ("admin",))
+            if not cursor.fetchone():
+                default_password = "1234".encode('utf-8')
+                hashed_admin_pwd = bcrypt.hashpw(default_password, bcrypt.gensalt())
+
+
+                conn.execute("INSERT INTO users (username, password) VALUES (?, ?)",
+                             ("admin", hashed_admin_pwd))
 
     def register_user(self, username, password):
+        password_bytes = password.encode('utf-8')
+
+        hashed_password = bcrypt.hashpw(password_bytes, bcrypt.gensalt())
+
         query = "INSERT INTO users (username, password) VALUES (?, ?)"
         try:
             with self._get_connection() as conn:
-                conn.execute(query, (username, password))
+                conn.execute(query, (username, hashed_password))
                 return True
         except sqlite3.IntegrityError:
             return False
 
+    def validate_user(self, username, password):
+        query = "SELECT password FROM users WHERE username = ?"
+        with self._get_connection() as conn:
+            cursor = conn.execute(query, (username,))
+            result = cursor.fetchone()
+
+            if result:
+                stored_hash = result[0]
+                if bcrypt.checkpw(password.encode('utf-8'), stored_hash):
+                    return True
+            return False
 
 class Authenticator:
     def __init__(self):
@@ -204,16 +221,28 @@ class Server:
                 src, dst = pkt[IP].src, pkt[IP].dst
                 if TCP in pkt:
                     proto, sport, dport = "TCP", pkt[TCP].sport, pkt[TCP].dport
+                    if dport in [443] or sport in [443]:
+                        proto += "- https"
+                    elif dport in [80] or sport in [80]:
+                        proto += "- http"
+                    elif dport in [25, 465, 587] or sport in [25, 465, 587]:
+                        proto += "- SMTP"  # זיהוי SMTP
                 elif UDP in pkt:
                     proto, sport, dport = "UDP", pkt[UDP].sport, pkt[UDP].dport
+                    if dport in [53, 5353] or sport in [53, 5353]:
+                        proto += "- DNS"
+                    elif dport in [67, 68] or sport in [67, 68]:
+                        proto += "- DHCP"  # זיהוי DHCP ל-IPv4
                 elif ICMP in pkt:
                     proto = "ICMP"
             elif IPv6 in pkt:
                 src, dst = pkt[IPv6].src, pkt[IPv6].dst
                 if TCP in pkt:
-                    proto = "TCPv6"
+                    proto, sport, dport = "TCPv6", pkt[TCP].sport, pkt[TCP].dport
+                    if dport in [25, 465, 587] or sport in [25, 465, 587]: proto += "- SMTP"  # זיהוי SMTP ב-IPv6
                 elif UDP in pkt:
-                    proto = "UDPv6"
+                    proto, sport, dport = "UDPv6", pkt[UDP].sport, pkt[UDP].dport
+                    if dport in [546, 547] or sport in [546, 547]: proto += "- DHCPv6"  # זיהוי DHCP ל-IPv6
 
             return f"{proto}|{src}|{dst}|{sport}|{dport}|{src_mac}|{dst_mac}|{packet_bytes.hex()}"
         except:
