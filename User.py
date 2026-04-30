@@ -4,10 +4,8 @@ import time
 import tkinter as tk
 from tkinter import ttk
 import threading
-
 import matplotlib
 import subprocess
-
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -295,6 +293,8 @@ class User:
         tree.tag_configure("ARP", foreground="lightgreen")
         tree.tag_configure("ALERT", foreground="red")
         tree.tag_configure("Other", foreground="white")
+        tree.tag_configure("DHCP", foreground="#00ffff")
+        tree.tag_configure("SMTP", foreground="#FFC107")
 
         def on_packet_select(event):
             selection = tree.selection()
@@ -361,6 +361,10 @@ class User:
                     color_tag = "ICMP"
                 elif proto.startswith("ARP"):
                     color_tag = "ARP"
+                elif "DHCP" in proto:
+                    color_tag = "DHCP"
+                elif "SMTP" in proto:
+                    color_tag = "SMTP"
 
                 f_ip = ip_filter.get().lower().strip()
                 f_port = port_filter.get().lower().strip()
@@ -398,11 +402,9 @@ class User:
         def sniff_thread():
             global sniffing
             sniffing = True
-            # מדליקים את הסניפר פעם אחת ברצף!
             sniff(prn=process_packet, store=False, stop_filter=stop_check)
 
         def stop_check(packet):
-            # הפונקציה הזו בודקת אחרי כל פאקטה אם צריך לעצור
             global sniffing
             return not sniffing
 
@@ -596,7 +598,6 @@ class User:
     def _capture_active_window(window_object):
         """תופסת צילום של החלון הספציפי שקיבלה, פותחת דיאלוג שמירה ושומרת."""
         try:
-            # שלב א': חישוב הקואורדינטות הלוגיות של החלון
             x = window_object.winfo_rootx()
             y = window_object.winfo_rooty()
             w = window_object.winfo_width()
@@ -607,7 +608,6 @@ class User:
             screenshot = ImageGrab.grab(bbox=bbox)
             # ---------------------
 
-            # שלב ג': שליחה לפונקציית השמירה
             User._save_screenshot_to_file(screenshot)
         except Exception as e:
             messagebox.showerror("Capture Error", f"Could not capture window:\n{str(e)}")
@@ -616,7 +616,6 @@ class User:
         # יצירת החלון
         pie_win = tk.Toplevel()
         pie_win.title("Protocol Breakdown Chart")
-        # נגדיל קצת את החלון כדי לתת מקום לכפתור
         pie_win.geometry("650x620")
         pie_win.configure(bg="#1e1e1e")
 
@@ -627,7 +626,6 @@ class User:
             font=("Arial", 10, "bold"),
             bg="#00a046", fg="white",
             width=20, height=2,
-            # שימוש ב-lambda כדי להעביר את 'pie_win' לצילום
             command=lambda: User._capture_active_window(pie_win)
         )
         # נמקם אותו בפינה הימנית העליונה עם שוליים
@@ -658,7 +656,6 @@ class User:
             startangle=90
         )
 
-        # הוספת מקרא מסודר בצד שמאל
         ax.legend(
             wedges,
             [f"{k} ({v} pkts)" for k, v in filtered_protos.items()],
@@ -687,7 +684,6 @@ class User:
         ]
 
         try:
-            # מריץ את הפקודה. שים לב: זה דורש שהפייתון ירוץ כ-Administrator!
             result = subprocess.run(command, capture_output=True, text=True, check=True)
             messagebox.showinfo("Firewall Updated", f"Successfully blocked IP:\n{ip_address}\n\nRule Name: {rule_name}")
         except subprocess.CalledProcessError as e:
@@ -708,18 +704,16 @@ if __name__ == "__main__":
     main_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     try:
-        main_socket.settimeout(5)  # נותנים לו 5 שניות לנסות להתחבר
+        main_socket.settimeout(5)
         print("Connecting to server...")
         main_socket.connect((server_ip, server_port))
-        main_socket.settimeout(None)  # מחזירים למצב רגיל אחרי שהתחברנו
+        main_socket.settimeout(None)
         print("[CONNECTED] Persistent link established.")
 
-        # 2. מעבירים את החיבור ("מזריקים" אותו) למחלקת ההתחברות
         auth = Authentication(main_socket)
 
         if auth.authentication_screen():
             print("Login successful!")
-            # 3. מעבירים את אותו חיבור בדיוק למחלקת הלקוח
             user = User(main_socket)
             root = user.create_main_window()
             root.mainloop()
@@ -727,11 +721,9 @@ if __name__ == "__main__":
             print("Authentication failed or window closed.")
 
     except Exception as e:
-        # אם השרת למטה, אנחנו תופסים את זה כאן ולא פותחים שום חלון
         print(f"[FATAL ERROR] Could not connect to the server: {e}")
         messagebox.showerror("Connection Error", "Cannot reach the Analysis Server. Is it running?")
 
     finally:
-        # 4. לא משנה מה קרה (שגיאה, או שהמשתמש סגר את התוכנה) - אנחנו סוגרים את הצינור
         main_socket.close()
         print("[DISCONNECTED] Socket closed safely.")
