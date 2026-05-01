@@ -468,15 +468,20 @@ class User:
 
         pie_btn.place(relx=0.98, x=-260, y=10, anchor="ne")
 
+        # 1. הגדרת זמן נוכחי וחלון זמן ( 10)
+        now = time.time()
+        window_size = 10
+
         with captured_lock:
-            snapshot = list(captured_packets)
+            # 2. סינון פאקטות שהגיעו רק ב-10 השניות האחרונות
+            recent_packets = [p for p in captured_packets if now - p["ts"] <= window_size]
 
-        # ספירת הפאקטות מכל IP (כדי שנוכל להציע חסימה)
-        src_counter = collections.Counter(p["src"] for p in snapshot)
+        # 3. ספירת המקורות רק מהפאקטות האחרונות
+        src_counter = collections.Counter(p["src"] for p in recent_packets)
 
-        # רף לזיהוי: 200 פאקטות
+        # 4. זיהוי איומים - למשל מעל 100 פאקטות ב-10 שניות
         threat_ips = {ip: count for ip, count in src_counter.items()
-                      if count > 150 and ip != self.local_ip}
+                      if count > 100 and ip != self.local_ip}
 
         if threat_ips:
             threats_frame = tk.LabelFrame(analyze_window, text="🚨 ACTIVE THREATS (Possible DoS) 🚨",
@@ -581,7 +586,7 @@ class User:
 
             fpath = filedialog.asksaveasfilename(
                 defaultextension=".png",  # סיומת ברירת מחדל
-                initialfile=f"Packet-Anylize_{current_time}.png",
+                initialfile=f"Packet-Anylize_F{current_time}.png",
                 title="Save Packet Analysis Screenshot As...",
                 filetypes=[("PNG Image", "*.png"), ("JPG Image", "*.jpg"), ("All Files", "*.*")]
             )
